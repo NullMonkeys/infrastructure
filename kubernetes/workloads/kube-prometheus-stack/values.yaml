@@ -84,7 +84,8 @@ grafana:
       login_attribute_path: preferred_username
       email_attribute_path: email
       name_attribute_path: name
-      role_attribute_path: "'Admin'"
+      role_attribute_path: >-
+        "'Admin'"
       skip_org_role_sync: false
       use_pkce: true
 
