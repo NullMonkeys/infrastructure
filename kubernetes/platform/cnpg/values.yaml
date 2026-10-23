@@ -1,0 +1,22 @@
+---
+replicaCount: 1
+
+crds:
+  create: true
+
+serviceAccount:
+  create: true
+
+resources:
+    limits:
+      cpu: "1"
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 100Mi
+
+monitoring:
+  podMonitorEnabled: true
+
+  grafanaDashboard:
+    create: true

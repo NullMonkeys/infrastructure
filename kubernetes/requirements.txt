@@ -1,0 +1,2 @@
+# YAML parsing for manifest validation; deployment scripts remain standard-library-only.
+PyYAML==6.0.3

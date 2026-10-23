@@ -1,0 +1,167 @@
+- name: Refuse to bootstrap a second cluster over existing servers
+  ansible.builtin.assert:
+    that:
+      - groups['control_plane'] | k3s_bootstrap_safe(hostvars, k3s_bootstrap_host)
+
+- name: Check the existing service unit
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ k3s_service }}.service"
+  register: k3s_unit
+
+- name: Inspect an existing K3s configuration
+  ansible.builtin.stat:
+    path: /etc/rancher/k3s/config.yaml
+  register: k3s_config_stat
+
+- name: Read existing configuration ownership
+  ansible.builtin.slurp:
+    src: /etc/rancher/k3s/config.yaml
+  register: k3s_previous_config
+  when: k3s_config_stat.stat.exists
+  no_log: true
+
+- name: Determine configuration ownership without exposing its contents
+  ansible.builtin.set_fact:
+    k3s_config_owned: >-
+      {{ not k3s_config_stat.stat.exists or
+      (k3s_previous_config.content | default('') | b64decode).startswith('# Managed by Ansible: infrastructure k3s role') }}
+  no_log: true
+
+- name: Refuse to overwrite an unmanaged installation
+  ansible.builtin.assert:
+    that:
+      - k3s_config_owned
+      - not k3s_unit.stat.exists or k3s_config_stat.stat.exists
+    fail_msg: Existing K3s configuration is not managed by this role; migrate it explicitly first.
+
+- name: Create installation and configuration directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /usr/local/libexec
+    - /etc/rancher/k3s
+    - /var/lib/rancher/k3s/agent/etc/kubelet.conf.d
+
+- name: Configure automatic cleanup of unused container images
+  ansible.builtin.template:
+    src: image-gc.conf.j2
+    dest: /var/lib/rancher/k3s/agent/etc/kubelet.conf.d/10-image-gc.conf
+    owner: root
+    group: root
+    mode: '0644'
+  register: k3s_image_gc
+
+- name: Copy the cluster-generated token to joining nodes
+  ansible.builtin.copy:
+    content: "{{ hostvars[k3s_bootstrap_host].k3s_node_token.content | b64decode | trim }}\n"
+    dest: /etc/rancher/k3s/join-token
+    owner: root
+    group: root
+    mode: '0600'
+  register: k3s_join_token
+  no_log: true
+  diff: false
+  when: inventory_hostname != k3s_bootstrap_host
+
+- name: Configure the node and private cluster network
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  register: k3s_config
+
+- name: Create the service dependency directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ k3s_service }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: storage_targets | length > 0
+
+- name: Require data mounts before starting K3s
+  ansible.builtin.copy:
+    content: "[Unit]\nRequiresMountsFor={{ storage_targets | map(attribute='mount_path') | join(' ') }}\n"
+    dest: "/etc/systemd/system/{{ k3s_service }}.service.d/10-storage.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  register: k3s_mount_unit
+  when: storage_targets | length > 0
+
+- name: Download the pinned official installer
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/k3s-io/k3s/{{ k3s_version }}/install.sh"
+    checksum: "sha256:{{ k3s_installer_sha256 }}"
+    dest: /usr/local/libexec/k3s-install.sh
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Check the installed binary
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_binary
+
+- name: Read the installed K3s version
+  ansible.builtin.command: /usr/local/bin/k3s --version
+  register: k3s_installed_version
+  changed_when: false
+  check_mode: false
+  when: k3s_binary.stat.exists
+
+- name: Install the pinned binary and service
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/k3s-install.sh, "{{ k3s_mode }}"]
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_SKIP_START: 'true'
+    INSTALL_K3S_SKIP_ENABLE: 'true'
+  register: k3s_install
+  changed_when: true
+  when: >-
+    not k3s_binary.stat.exists or not k3s_unit.stat.exists or
+    k3s_version not in (k3s_installed_version.stdout | default('')).split()
+
+- name: Check the private API path from the joining node
+  ansible.builtin.wait_for:
+    host: "{{ k3s_bootstrap_ip }}"
+    port: 6443
+    timeout: 120
+  when: inventory_hostname != k3s_bootstrap_host
+
+- name: Start or update the K3s service
+  ansible.builtin.systemd_service:
+    name: "{{ k3s_service }}"
+    enabled: true
+    daemon_reload: true
+    no_block: true
+    state: >-
+      {{ 'restarted' if k3s_config.changed or k3s_image_gc.changed or k3s_install.changed | default(false) or
+      k3s_join_token.changed | default(false) or k3s_mount_unit.changed | default(false) else 'started' }}
+
+- name: Wait for the local control plane and etcd to become ready
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, '--request-timeout=5s', get, '--raw=/readyz']
+  register: k3s_ready
+  changed_when: false
+  retries: 60
+  delay: 5
+  until: k3s_ready.rc == 0
+  when: k3s_mode == 'server'
+
+- name: Wait for the worker service to start
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ k3s_service }}"]
+  register: k3s_agent_ready
+  changed_when: false
+  retries: 60
+  delay: 5
+  until: k3s_agent_ready.rc == 0
+  when: k3s_mode == 'agent'

@@ -1,0 +1,16 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+
+metadata:
+  name: argocd-public
+
+spec:
+  secretName: argocd-public-tls
+
+  dnsNames:
+    - argocd.nullmonkeys.com
+
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer

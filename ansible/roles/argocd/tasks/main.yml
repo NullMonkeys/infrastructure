@@ -1,0 +1,134 @@
+- name: Inspect the existing Argo CD namespace
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, get, namespace, argocd, '--ignore-not-found', -o, json]
+  register: argocd_namespace
+  changed_when: false
+
+- name: Require ownership of an existing Argo CD installation
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (argocd_namespace.stdout | trim) or
+        (argocd_namespace.stdout | from_json).metadata.get('labels', {}).get('app.kubernetes.io/managed-by') == 'infrastructure-ansible'
+    fail_msg: The argocd namespace already exists outside this bootstrap; migrate it explicitly first.
+  tags: [argocd_validation]
+
+- name: Create the bootstrap directory
+  ansible.builtin.file:
+    path: "{{ argocd_work_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Inspect the installed Argo CD server
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, -n, argocd, get, deployment, argocd-server, '--ignore-not-found', -o, json]
+  register: argocd_server
+  changed_when: false
+
+- name: Determine whether an initial installation or explicit recovery is needed
+  ansible.builtin.set_fact:
+    argocd_seed_install: "{{ not (argocd_server.stdout | trim) or argocd_recover | bool }}"
+  tags: [argocd_install_decision]
+
+- name: Copy repository bootstrap configuration
+  ansible.builtin.copy:
+    src: "{{ argocd_bootstrap_dir }}/"
+    dest: "{{ argocd_work_dir }}/bootstrap/"
+    owner: root
+    group: root
+    mode: '0644'
+    directory_mode: '0755'
+
+- name: Create the Argo CD namespace
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, apply, '--server-side', '--field-manager=infrastructure-ansible', -f, "{{ argocd_work_dir }}/bootstrap/namespace.yaml"]
+  changed_when: true
+
+- name: Download the pinned official Argo CD manifest
+  ansible.builtin.get_url:
+    url: "{{ argocd_manifest_url }}"
+    dest: "{{ argocd_work_dir }}/install.yaml"
+    owner: root
+    group: root
+    mode: '0644'
+  when: argocd_seed_install
+
+- name: Seed Argo CD only for initial installation or explicit recovery
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - -n
+      - argocd
+      - apply
+      - --server-side
+      - --force-conflicts
+      - --field-manager=argocd-installer
+      - -f
+      - "{{ argocd_work_dir }}/install.yaml"
+  changed_when: true
+  when: argocd_seed_install
+
+- name: Copy initial controller configuration
+  ansible.builtin.copy:
+    src: "{{ argocd_installation_dir }}/config.yaml"
+    dest: "{{ argocd_work_dir }}/config.yaml"
+    owner: root
+    group: root
+    mode: '0644'
+  when: argocd_seed_install
+
+- name: Seed child Application health checks before the first reconciliation
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - -n
+      - argocd
+      - apply
+      - --server-side
+      - --force-conflicts
+      - --field-manager=argocd-bootstrap-config
+      - -f
+      - "{{ argocd_work_dir }}/config.yaml"
+  changed_when: true
+  when: argocd_seed_install
+
+- name: Wait for Argo CD custom resources
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, wait, '--for=condition=Established', '--timeout=120s', "crd/{{ item }}.argoproj.io"]
+  loop: [applications, applicationsets, appprojects]
+  changed_when: false
+
+- name: Apply bootstrap rendering support, projects, and the root Application
+  ansible.builtin.command:
+    # A distinct manager also preserves legacy ConfigMap fields during adoption.
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - apply
+      - --server-side
+      - --force-conflicts
+      - --field-manager=argocd-bootstrap
+      - -k
+      - "{{ argocd_work_dir }}/bootstrap"
+  changed_when: true
+
+- name: Wait for Argo CD services and controllers
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, -n, argocd, rollout, status, "{{ item }}", '--timeout=300s']
+  loop:
+    - deployment/argocd-redis
+    - deployment/argocd-repo-server
+    - statefulset/argocd-application-controller
+    - deployment/argocd-server
+  changed_when: false
+
+- name: Report GitOps bootstrap completion
+  ansible.builtin.debug:
+    msg: >-
+      Argo CD controllers are ready and the root Application is configured.
+      Argo reconciles service manifests independently; check application sync and
+      health in Argo CD. See docs/gitops.md for access and diagnostics.

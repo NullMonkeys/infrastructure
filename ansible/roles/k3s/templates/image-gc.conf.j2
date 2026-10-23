@@ -1,0 +1,7 @@
+# Managed by Ansible: infrastructure k3s role
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+imageGCHighThresholdPercent: {{ k3s_image_gc_high_threshold }}
+imageGCLowThresholdPercent: {{ k3s_image_gc_low_threshold }}
+imageMinimumGCAge: {{ k3s_image_gc_minimum_age | to_json }}
+imageMaximumGCAge: {{ k3s_image_gc_maximum_age | to_json }}

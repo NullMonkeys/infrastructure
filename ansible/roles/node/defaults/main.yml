@@ -1,0 +1,13 @@
+node_packages:
+  - ca-certificates
+  - curl
+  - jq
+  - e2fsprogs
+  - util-linux
+  - kmod
+  - open-iscsi
+  - nfs-common
+
+storage_mount_path: /var/lib/longhorn
+storage_mounts: {}
+storage_device_timeout: 180

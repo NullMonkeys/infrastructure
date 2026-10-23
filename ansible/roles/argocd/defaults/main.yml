@@ -1,0 +1,6 @@
+argocd_bootstrap_dir: "{{ playbook_dir }}/../../kubernetes/bootstrap"
+argocd_work_dir: /var/lib/ansible/argocd
+argocd_installation_dir: "{{ playbook_dir }}/../../kubernetes/platform/argocd"
+argocd_installation: "{{ lookup('ansible.builtin.file', argocd_installation_dir ~ '/kustomization.yaml') | from_yaml }}"
+argocd_manifest_url: "{{ argocd_installation.resources[0] }}"
+argocd_recover: false

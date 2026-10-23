@@ -1,0 +1,9 @@
+---
+apiVersion: secrets.infisical.com/v1beta1
+kind: InfisicalConnection
+
+metadata:
+  name: infisical-cloud
+
+spec:
+  address: https://app.infisical.com

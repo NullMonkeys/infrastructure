@@ -1,0 +1,38 @@
+---
+apiVersion: v1
+kind: ConfigMap
+
+metadata:
+  name: argocd-cm
+  labels:
+    app.kubernetes.io/part-of: argocd
+
+data:
+  url: https://argocd.nullmonkeys.com
+  timeout.reconciliation: 120s
+  resource.customizations.health.argoproj.io_Application: |
+    local health = {status = "Progressing", message = "Waiting for application reconciliation"}
+    if obj.status ~= nil then
+      if obj.status.sync == nil or obj.status.sync.status ~= "Synced" then
+        return health
+      end
+      if obj.status.health ~= nil then
+        health.status = obj.status.health.status
+        health.message = obj.status.health.message or ""
+      end
+    end
+    return health
+  resource.customizations.health.secrets.infisical.com_InfisicalStaticSecret: |
+    local health = {status = "Progressing", message = "Waiting for secret synchronization"}
+    if obj.status == nil or obj.status.observedGeneration ~= obj.metadata.generation then
+      return health
+    end
+    if obj.status.error == true then
+      return {status = "Degraded", message = "Infisical secret synchronization failed; inspect the operator"}
+    end
+    for _, condition in ipairs(obj.status.conditions or {}) do
+      if condition.type == "secrets.infisical.com/LastReconcileStatus" and condition.status == "True" then
+        return {status = "Healthy", message = "Secrets synchronized"}
+      end
+    end
+    return health

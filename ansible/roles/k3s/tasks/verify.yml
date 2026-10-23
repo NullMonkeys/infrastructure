@@ -1,0 +1,157 @@
+- name: Wait for every inventory node to be Ready with its inventory IP addresses
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, '--request-timeout=10s', get, nodes, -o, json]
+  register: k3s_nodes
+  changed_when: false
+  retries: 60
+  delay: 5
+  until: >-
+    k3s_nodes.rc == 0 and
+    (k3s_nodes.stdout | from_json | k3s_nodes_ready(groups['k3s_cluster'], hostvars))
+
+- name: Verify etcd metrics on each server's private address
+  ansible.builtin.uri:
+    url: "http://{{ hostvars[item].private_ip }}:2381/metrics"
+    return_content: true
+    use_proxy: false
+    timeout: 10
+  loop: "{{ groups['control_plane'] | sort }}"
+  register: k3s_etcd_metrics
+  retries: 12
+  delay: 5
+  until: k3s_etcd_metrics.status | default(0) == 200 and 'etcd_server_has_leader' in (k3s_etcd_metrics.content | default(''))
+  loop_control:
+    label: "{{ item }}:2381"
+
+- name: Wait for cluster DNS
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, -n, kube-system, rollout, status, deployment/coredns, '--timeout=180s']
+  changed_when: false
+
+- name: Check ownership of a previous networking-check namespace
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, get, namespace, "{{ k3s_network_check_namespace }}", '--ignore-not-found', -o, json]
+  register: k3s_check_existing
+  changed_when: false
+
+- name: Refuse to reuse an unrelated namespace
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (k3s_check_existing.stdout | trim) or
+        (k3s_check_existing.stdout | from_json).metadata.get('labels', {}).get('app.kubernetes.io/managed-by') == 'infrastructure-ansible'
+    fail_msg: The networking-check namespace already exists and is not owned by this automation.
+
+- name: Allocate a temporary manifest
+  ansible.builtin.tempfile:
+    state: file
+    suffix: -network-check.yaml
+  register: k3s_check_manifest
+
+- name: Exercise cluster networking
+  block:
+    - name: Render the temporary networking workload
+      ansible.builtin.template:
+        src: network-check.yaml.j2
+        dest: "{{ k3s_check_manifest.path }}"
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Start a networking pod on every inventory node
+      ansible.builtin.command:
+        argv: [/usr/local/bin/k3s, kubectl, apply, -f, "{{ k3s_check_manifest.path }}"]
+      register: k3s_check_apply
+      changed_when: "'created' in k3s_check_apply.stdout or 'configured' in k3s_check_apply.stdout"
+
+    - name: Wait for the networking pods
+      ansible.builtin.command:
+        argv: [/usr/local/bin/k3s, kubectl, -n, "{{ k3s_network_check_namespace }}", rollout, status, daemonset/network-check, '--timeout=300s']
+      changed_when: false
+
+    - name: Read the running networking pods
+      ansible.builtin.command:
+        argv: [/usr/local/bin/k3s, kubectl, -n, "{{ k3s_network_check_namespace }}", get, pods, -l, app=network-check, -o, json]
+      register: k3s_check_pod_list
+      changed_when: false
+
+    - name: Record pod addresses and placement
+      ansible.builtin.set_fact:
+        k3s_check_pods: "{{ (k3s_check_pod_list.stdout | from_json)['items'] }}"
+
+    - name: Require one IPv4 networking pod on every inventory node
+      ansible.builtin.assert:
+        that:
+          - k3s_check_pods | length == groups['k3s_cluster'] | length
+          - k3s_check_pods | map(attribute='spec.nodeName') | sort == groups['k3s_cluster'] | sort
+          - k3s_check_pods | selectattr('status.podIP', 'defined') | list | length == k3s_check_pods | length
+
+    - name: Check DNS and ClusterIP traffic from every node
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - -n
+          - "{{ k3s_network_check_namespace }}"
+          - exec
+          - "{{ item.metadata.name }}"
+          - --
+          - wget
+          - -T
+          - '10'
+          - -qO-
+          - "http://network-check.{{ k3s_network_check_namespace }}.svc.{{ k3s_cluster_domain }}:8080/"
+      loop: "{{ k3s_check_pods }}"
+      register: k3s_service_check
+      retries: 3
+      delay: 3
+      until: k3s_service_check.rc == 0 and k3s_service_check.stdout | trim in groups['k3s_cluster']
+      changed_when: false
+      loop_control:
+        label: "{{ item.spec.nodeName }}: DNS and ClusterIP"
+
+    - name: Check direct pod traffic and a larger response between different nodes
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - -n
+          - "{{ k3s_network_check_namespace }}"
+          - exec
+          - "{{ item.0.metadata.name }}"
+          - --
+          - sh
+          - -ec
+          - |
+            identity="$(wget -T 10 -qO- "$1/")"
+            test "$identity" = "$2"
+            bytes="$(wget -T 10 -qO- "$1/payload" | wc -c)"
+            test "$bytes" -eq 65536
+            printf '%s\n' "$identity"
+          - network-check
+          - "http://{{ item.1.status.podIP }}:8080"
+          - "{{ item.1.spec.nodeName }}"
+      loop: "{{ k3s_check_pods | product(k3s_check_pods) | list }}"
+      when: item.0.spec.nodeName != item.1.spec.nodeName
+      register: k3s_direct_check
+      retries: 3
+      delay: 3
+      until: k3s_direct_check.rc == 0 and k3s_direct_check.stdout | trim == item.1.spec.nodeName
+      changed_when: false
+      loop_control:
+        label: "{{ item.0.spec.nodeName }} -> {{ item.1.spec.nodeName }}"
+
+    - name: Report cluster checks
+      ansible.builtin.debug:
+        msg: Inventory nodes are Ready with private IPv4 addresses; etcd metrics, DNS, ClusterIP, and cross-node pod traffic passed.
+  always:
+    - name: Remove the temporary networking namespace
+      ansible.builtin.command:
+        argv: [/usr/local/bin/k3s, kubectl, delete, namespace, "{{ k3s_network_check_namespace }}", '--ignore-not-found', '--timeout=90s']
+      register: k3s_check_delete
+      changed_when: "'deleted' in k3s_check_delete.stdout"
+
+    - name: Remove the temporary manifest
+      ansible.builtin.file:
+        path: "{{ k3s_check_manifest.path }}"
+        state: absent

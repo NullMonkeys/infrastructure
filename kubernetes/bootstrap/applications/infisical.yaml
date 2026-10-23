@@ -1,0 +1,39 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+
+metadata:
+  name: infisical
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+
+spec:
+  project: infrastructure
+
+  source:
+    repoURL: https://github.com/NullMonkeys/infrastructure.git
+    targetRevision: main
+    path: kubernetes/platform/infisical
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: infisical-operator-system
+
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: true
+      selfHeal: true
+
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+
+    retry:
+      limit: 10
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

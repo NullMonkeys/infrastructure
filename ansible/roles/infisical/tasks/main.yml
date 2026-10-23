@@ -1,0 +1,59 @@
+- name: Inspect the existing Infisical bootstrap credential
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - -n
+      - infisical-operator-system
+      - get
+      - secret
+      - infisical-universal-auth
+      - --ignore-not-found
+      - -o
+      - json
+  register: infisical_existing_credential
+  changed_when: false
+  no_log: true
+
+- name: Require both values when supplying or rotating the machine credential
+  ansible.builtin.assert:
+    that:
+      - (infisical_client_id | length > 0) == (infisical_client_secret | length > 0)
+    fail_msg: Supply both INFISICAL_CLIENT_ID and INFISICAL_CLIENT_SECRET, or reuse the installed credential.
+  tags: [infisical_validation]
+
+- name: Determine whether a complete bootstrap credential is available
+  ansible.builtin.set_fact:
+    infisical_credential_available: >-
+      {{ (infisical_client_id | length > 0 and infisical_client_secret | length > 0) or
+      ((infisical_existing_credential.stdout | default('') | trim | length > 0) and
+      ((infisical_existing_credential.stdout | from_json).get('data', {}).get('clientId', '') | b64decode | length > 0) and
+      ((infisical_existing_credential.stdout | from_json).get('data', {}).get('clientSecret', '') | b64decode | length > 0)) }}
+  no_log: true
+  tags: [infisical_validation]
+
+- name: Require an Infisical machine identity credential
+  ansible.builtin.assert:
+    that: [infisical_credential_available]
+    fail_msg: Set repository secrets INFISICAL_CLIENT_ID and INFISICAL_CLIENT_SECRET for the Infisical read-only machine identity.
+  tags: [infisical_validation]
+
+- name: Create the Infisical bootstrap namespace
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, apply, '--server-side', '--field-manager=infrastructure-ansible', -f, '-']
+    stdin: >-
+      {{ {'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': 'infisical-operator-system'}} | to_json }}
+  changed_when: true
+
+- name: Supply the Infisical credential without logging or writing it to disk
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, apply, '--server-side', '--field-manager=infrastructure-ansible', -f, '-']
+    stdin: >-
+      {{ {'apiVersion': 'v1', 'kind': 'Secret',
+      'metadata': {'name': 'infisical-universal-auth', 'namespace': 'infisical-operator-system'},
+      'type': 'Opaque', 'data': {'clientId': infisical_client_id | b64encode,
+      'clientSecret': infisical_client_secret | b64encode}} | to_json }}
+  no_log: true
+  diff: false
+  changed_when: true
+  when: infisical_client_id | length > 0 and infisical_client_secret | length > 0

@@ -1,0 +1,54 @@
+- name: Inspect cluster hosts
+  hosts: k3s_cluster
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  vars_files: [../vars/k3s.yml]
+  tasks:
+    - name: Inspect K3s prerequisites and establish installation groups
+      ansible.builtin.import_role:
+        name: k3s
+        tasks_from: preflight
+
+- name: Bootstrap the K3s control plane
+  hosts: k3s_bootstrap
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../vars/k3s.yml]
+  roles: [k3s]
+  post_tasks:
+    - name: Read the cluster-generated secure join token
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: k3s_node_token
+      no_log: true
+
+- name: Join K3s control-plane servers
+  hosts: k3s_servers
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  serial: 1
+  vars_files: [../vars/k3s.yml]
+  roles: [k3s]
+
+- name: Join K3s workers
+  hosts: k3s_agents
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../vars/k3s.yml]
+  roles: [k3s]
+
+- name: Verify cluster networking and etcd metrics
+  hosts: k3s_bootstrap
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../vars/k3s.yml]
+  tasks:
+    - name: Verify K3s across inventory nodes
+      ansible.builtin.import_role:
+        name: k3s
+        tasks_from: verify

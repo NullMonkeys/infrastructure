@@ -1,0 +1,72 @@
+- name: Require inventory control-plane nodes
+  ansible.builtin.assert:
+    that:
+      - groups.get('control_plane', []) | length > 0
+
+- name: Validate image cleanup thresholds
+  ansible.builtin.assert:
+    that:
+      - k3s_image_gc_low_threshold is integer
+      - k3s_image_gc_high_threshold is integer
+      - 0 <= k3s_image_gc_low_threshold < k3s_image_gc_high_threshold < 100
+      - k3s_image_gc_minimum_age is string
+      - k3s_image_gc_maximum_age is string
+
+- name: Validate roles and IPv4 cluster addressing
+  ansible.builtin.assert:
+    that:
+      - groups | k3s_inventory_valid(hostvars, k3s_bootstrap_host, k3s_pod_cidr, k3s_service_cidr, k3s_cluster_dns)
+      - storage_targets is defined
+    fail_msg: Run playbooks/site.yml so host preparation and storage checks finish first.
+
+- name: Determine the host's installation mode
+  ansible.builtin.set_fact:
+    k3s_mode: "{{ 'server' if inventory_hostname in groups['control_plane'] else 'agent' }}"
+    k3s_service: "{{ 'k3s' if inventory_hostname in groups['control_plane'] else 'k3s-agent' }}"
+
+- name: Check for an existing installation with the opposite role
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ 'k3s-agent' if k3s_mode == 'server' else 'k3s' }}.service"
+  register: k3s_opposite_unit
+
+- name: Require explicit migration when changing server and worker roles
+  ansible.builtin.assert:
+    that:
+      - not k3s_opposite_unit.stat.exists
+    fail_msg: This node already has the opposite K3s role; migrate it explicitly rather than starting a second service.
+
+- name: Find the interface owning the inventory private IPv4
+  ansible.builtin.command: ip -j -4 address show
+  register: k3s_addresses
+  changed_when: false
+  check_mode: false
+
+- name: Select the private interface for Flannel
+  ansible.builtin.set_fact:
+    k3s_private_interface: "{{ (k3s_addresses.stdout | from_json) | k3s_interface(private_ip) }}"
+
+- name: Inspect existing embedded-etcd data
+  ansible.builtin.stat:
+    path: /var/lib/rancher/k3s/server/db/etcd/member
+  register: k3s_existing_etcd
+  when: k3s_mode == 'server'
+
+- name: Establish ordered installation groups
+  ansible.builtin.group_by:
+    key: "{{ 'k3s_bootstrap' if inventory_hostname == k3s_bootstrap_host else ('k3s_servers' if k3s_mode == 'server' else 'k3s_agents') }}"
+
+- name: Load kernel modules required by container networking
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+    persistent: present
+  loop: [overlay, br_netfilter, vxlan]
+
+- name: Enable IPv4 forwarding and bridge filtering
+  ansible.posix.sysctl:
+    name: "{{ item }}"
+    value: '1'
+    sysctl_file: /etc/sysctl.d/90-k3s.conf
+    sysctl_set: true
+    reload: true
+  loop: [net.ipv4.ip_forward, net.bridge.bridge-nf-call-iptables]

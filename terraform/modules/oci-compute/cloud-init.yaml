@@ -1,0 +1,23 @@
+#cloud-config
+hostname: ${jsonencode(hostname)}
+preserve_hostname: false
+manage_etc_hosts: localhost
+
+runcmd:
+  - |
+    set -eu
+
+    if [ -f /etc/iptables/rules.v4 ]; then
+      sed -i \
+        -e '/^-A INPUT -j REJECT --reject-with icmp-host-prohibited$/d' \
+        -e '/^-A FORWARD -j REJECT --reject-with icmp-host-prohibited$/d' \
+        /etc/iptables/rules.v4
+    fi
+
+    for chain in INPUT FORWARD; do
+      if iptables -C "$chain" \
+        -j REJECT --reject-with icmp-host-prohibited 2>/dev/null; then
+        iptables -D "$chain" \
+          -j REJECT --reject-with icmp-host-prohibited
+      fi
+    done

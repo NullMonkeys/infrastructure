@@ -1,0 +1,193 @@
+name: Deployment
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - terraform/**
+      - '!terraform/**/*.md'
+      - ansible/**
+      - '!ansible/**/*.md'
+      - scripts/**
+      - '!scripts/tests/**'
+      - '!scripts/check_gitops.py'
+      - kubernetes/bootstrap/*.yaml
+      - .github/workflows/deployment.yml
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Check HCP setup or deploy this commit
+        type: choice
+        options: [check, deploy]
+        default: check
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infrastructure-main
+  cancel-in-progress: false
+  queue: max
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  scope:
+    name: Select deployment stages
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      terraform: ${{ steps.scope.outputs.terraform }}
+      ansible: ${{ steps.scope.outputs.ansible }}
+      bootstrap: ${{ steps.scope.outputs.bootstrap }}
+    steps:
+      - name: Checkout exact commit and history
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select required stages
+        id: scope
+        env:
+          BEFORE_COMMIT: ${{ github.event.before }}
+          SCOPE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'auto' }}
+        run: python3 -m scripts.deployment_scope --commit "$GITHUB_SHA" --before "$BEFORE_COMMIT" --mode "$SCOPE_MODE"
+
+  terraform:
+    name: Deploy infrastructure
+    needs: scope
+    if: needs.scope.outputs.terraform == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 210
+    env:
+      HCP_TERRAFORM_TOKEN: ${{ secrets.HCP_TERRAFORM_TOKEN }}
+      DEPLOY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'deploy' }}
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Run Terraform deployment
+        run: python3 scripts/hcp_deploy.py "$DEPLOY_MODE" --commit "$GITHUB_SHA"
+
+  inventory:
+    name: Build Ansible inventory
+    needs: [scope, terraform]
+    if: >-
+      !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.ansible == 'true' &&
+      (needs.terraform.result == 'success' ||
+      (needs.terraform.result == 'skipped' && needs.scope.outputs.terraform == 'false'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      HCP_TERRAFORM_TOKEN: ${{ secrets.HCP_TERRAFORM_TOKEN }}
+      ANSIBLE_CONFIG: ansible/ansible.cfg
+      DEPLOY_TERRAFORM: ${{ needs.scope.outputs.terraform }}
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install Ansible
+        run: python -m pip install -r ansible/requirements.txt
+
+      - name: Build inventory from HCP outputs
+        run: |
+          if [ "$DEPLOY_TERRAFORM" = 'true' ]; then
+            python -m scripts.build_inventory --commit "$GITHUB_SHA"
+          else
+            python -m scripts.build_inventory --commit "$GITHUB_SHA" --reuse-applied
+          fi
+
+      - name: Show inventory groups
+        run: ansible-inventory --graph
+
+      - name: Save inventory for this deployment
+        uses: actions/upload-artifact@v7
+        with:
+          name: ansible-inventory-${{ github.sha }}
+          path: .generated/ansible/inventory.json
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  ansible:
+    name: Configure hosts
+    needs: [scope, inventory]
+    if: ${{ !cancelled() && needs.inventory.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ANSIBLE_CONFIG: ansible/ansible.cfg
+      ANSIBLE_REMOTE_USER: ${{ vars.ANSIBLE_REMOTE_USER || 'ubuntu' }}
+      GITOPS_BOOTSTRAP: ${{ needs.scope.outputs.bootstrap }}
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download deployment inventory
+        uses: actions/download-artifact@v8
+        with:
+          name: ansible-inventory-${{ github.sha }}
+          path: .generated/ansible
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+
+      - name: Install Ansible
+        run: python -m pip install -r ansible/requirements.txt
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/collections/requirements.yml
+
+      - name: Configure SSH authentication
+        env:
+          ANSIBLE_SSH_PRIVATE_KEY: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$ANSIBLE_SSH_PRIVATE_KEY" ]; then
+            echo "::error::Repository secret ANSIBLE_SSH_PRIVATE_KEY is required for host configuration."
+            exit 1
+          fi
+          umask 077
+          key_dir="$RUNNER_TEMP/ansible-ssh"
+          mkdir -p "$key_dir"
+          printf '%s\n' "$ANSIBLE_SSH_PRIVATE_KEY" > "$key_dir/id"
+          ssh-keygen -y -P '' -f "$key_dir/id" > /dev/null
+          echo "ANSIBLE_PRIVATE_KEY_FILE=$key_dir/id" >> "$GITHUB_ENV"
+          echo "ANSIBLE_SSH_COMMON_ARGS=-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$key_dir/known_hosts" >> "$GITHUB_ENV"
+
+      - name: Apply required host configuration
+        env:
+          INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+        run: >-
+          ansible-playbook --user "$ANSIBLE_REMOTE_USER" ansible/playbooks/site.yml
+          --extra-vars "gitops_bootstrap_enabled=$GITOPS_BOOTSTRAP"
+
+      - name: Remove temporary SSH files
+        if: always()
+        run: rm -f "$RUNNER_TEMP/ansible-ssh/id" "$RUNNER_TEMP/ansible-ssh/known_hosts" "$RUNNER_TEMP/ansible-ssh/known_hosts.old"

@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-dns
+  annotations:
+    external-dns.kubernetes.io/hostname: ingress.nullmonkeys.com
+    external-dns.kubernetes.io/endpoints-type: NodeExternalIP
+    external-dns.kubernetes.io/ttl: "300"
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: false
+  selector:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-traefik
+  ports:
+    - name: websecure
+      port: 443
+      targetPort: websecure

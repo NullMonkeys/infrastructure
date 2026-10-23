@@ -1,0 +1,2 @@
+infisical_client_id: "{{ lookup('ansible.builtin.env', 'INFISICAL_CLIENT_ID') }}"
+infisical_client_secret: "{{ lookup('ansible.builtin.env', 'INFISICAL_CLIENT_SECRET') }}"

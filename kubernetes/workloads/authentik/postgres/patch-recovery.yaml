@@ -1,0 +1,37 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+
+metadata:
+  name: authentik-db
+  namespace: authentik
+
+spec:
+  backup:
+    barmanObjectStore:
+      serverName: authentik-db-restored
+
+  bootstrap:
+    recovery:
+      source: authentik-db
+      database: authentik
+      owner: authentik
+
+  externalClusters:
+    - name: authentik-db
+      barmanObjectStore:
+        serverName: authentik-db
+        destinationPath: s3://nm-authentik-pg
+        endpointURL: https://s3.eu-central-003.backblazeb2.com
+
+        s3Credentials:
+          accessKeyId:
+            name: authentik-secrets
+            key: backblaze-b2-postgres-backups-access-key
+          secretAccessKey:
+            name: authentik-secrets
+            key: backblaze-b2-postgres-backups-secret-key
+
+        wal:
+          compression: gzip
+          maxParallel: 8

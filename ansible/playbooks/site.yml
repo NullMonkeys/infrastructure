@@ -1,0 +1,9 @@
+- name: Prepare hosts
+  ansible.builtin.import_playbook: prepare.yml
+
+- name: Install and verify K3s
+  ansible.builtin.import_playbook: k3s.yml
+
+- name: Bootstrap GitOps
+  ansible.builtin.import_playbook: argocd.yml
+  when: gitops_bootstrap_enabled | default(true) | bool

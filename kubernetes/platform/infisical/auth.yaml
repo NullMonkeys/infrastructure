@@ -1,0 +1,23 @@
+---
+apiVersion: secrets.infisical.com/v1beta1
+kind: InfisicalAuth
+
+metadata:
+  name: cluster-secrets
+
+spec:
+  method: universal
+
+  infisicalConnectionRef:
+    name: infisical-cloud
+    namespace: infisical-operator-system
+
+  universal:
+    clientIdRef:
+      name: infisical-universal-auth
+      namespace: infisical-operator-system
+      key: clientId
+    clientSecretRef:
+      name: infisical-universal-auth
+      namespace: infisical-operator-system
+      key: clientSecret

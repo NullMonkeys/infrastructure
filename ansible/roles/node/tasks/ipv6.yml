@@ -1,0 +1,63 @@
+- name: Check the supported bootloader configuration
+  ansible.builtin.stat:
+    path: /etc/default/grub
+  register: ipv6_grub
+
+- name: Require GRUB configuration on the Ubuntu image
+  ansible.builtin.assert:
+    that:
+      - ipv6_grub.stat.isreg | default(false)
+    fail_msg: This image needs GRUB boot configuration to disable IPv6 at kernel level.
+
+- name: Read the active kernel command line
+  ansible.builtin.command: cat /proc/cmdline
+  register: ipv6_cmdline
+  changed_when: false
+  check_mode: false
+
+- name: Determine whether IPv6 disabling needs a reboot
+  ansible.builtin.set_fact:
+    ipv6_reboot_required: >-
+      {{ (ipv6_cmdline.stdout.split() | select('match', '^ipv6[.]disable=') |
+      list | last | default('')) != 'ipv6.disable=1' }}
+  tags: [ipv6_decision]
+
+- name: Ensure the GRUB configuration directory exists
+  ansible.builtin.file:
+    path: /etc/default/grub.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Persist the kernel-level IPv6 disable option
+  ansible.builtin.copy:
+    src: disable-ipv6.cfg
+    dest: /etc/default/grub.d/99-disable-ipv6.cfg
+    owner: root
+    group: root
+    mode: "0644"
+  register: ipv6_grub_config
+
+- name: Rebuild the GRUB boot configuration
+  ansible.builtin.command: update-grub
+  when: not ansible_check_mode and (ipv6_grub_config.changed or ipv6_reboot_required)
+  changed_when: true
+
+- name: Reboot to activate kernel-level IPv6 disabling
+  ansible.builtin.reboot:
+    msg: Applying the IPv4-only host configuration
+    reboot_timeout: 300
+    post_reboot_delay: 5
+  when: not ansible_check_mode and ipv6_reboot_required
+
+- name: Refresh host facts after the reboot
+  ansible.builtin.setup:
+  when: not ansible_check_mode and ipv6_reboot_required
+
+- name: Verify the boot option and that IPv6 sockets are unavailable
+  ansible.builtin.script:
+    cmd: check_ipv6.py
+    executable: "{{ ansible_facts.python.executable }}"
+  changed_when: false
+  when: not ansible_check_mode

@@ -1,0 +1,22 @@
+- name: Prepare cluster hosts
+  hosts: k3s_cluster
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  serial: 1
+
+  pre_tasks:
+    - name: Wait for SSH and Python
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Wait for image initialization to finish
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Gather host facts
+      ansible.builtin.setup:
+
+  roles:
+    - node

@@ -1,0 +1,31 @@
+---
+preUpgradeChecker:
+  jobEnabled: true
+  upgradeVersionCheck: true
+
+persistence:
+  createStorageClass: true
+  defaultClass: true
+  defaultFsType: ext4
+  defaultClassReplicaCount: 2
+  defaultDataLocality: best-effort
+  migratable: true
+
+defaultSettings:
+  defaultDataPath: /var/lib/longhorn
+  storageReservedPercentageForDefaultDisk: 5
+  storageMinimalAvailablePercentage: 5
+  concurrentAutomaticEngineUpgradePerNodeLimit: 2
+
+longhornUI:
+  replicas: 1
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  host: longhorn.nullmonkeys.com
+  tls: true
+  tlsSecret: longhorn-tls
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    external-dns.kubernetes.io/target: ingress.nullmonkeys.com

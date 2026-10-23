@@ -1,0 +1,96 @@
+---
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeScheduler:
+  enabled: false
+
+crds:
+  enabled: true
+
+kubeEtcd:
+  service:
+    enabled: false
+  serviceMonitor:
+    enabled: false
+
+prometheus:
+  prometheusSpec:
+    replicas: 1
+    retention: 3d
+    retentionSize: 6GB
+    scrapeInterval: 60s
+    evaluationInterval: 60s
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 10Gi
+    additionalScrapeConfigs:
+      - job_name: kube-etcd
+        scheme: http
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_node_labelpresent_node_role_kubernetes_io_control_plane]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_node_address_InternalIP]
+            target_label: __address__
+            regex: (.+)
+            replacement: $1:2381
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: instance
+
+grafana:
+  enabled: true
+  replicas: 1
+
+  deploymentStrategy:
+    type: Recreate
+
+  persistence:
+    enabled: true
+    storageClassName: longhorn
+    accessModes: [ReadWriteOnce]
+    size: 1Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+  sidecar:
+    datasources:
+      alertmanager:
+        enabled: false
+
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      external-dns.kubernetes.io/target: ingress.nullmonkeys.com
+    hosts:
+      - grafana.nullmonkeys.com
+    tls:
+      - secretName: grafana-tls
+        hosts:
+          - grafana.nullmonkeys.com
+
+alertmanager:
+  enabled: false

@@ -1,0 +1,26 @@
+---
+apiVersion: builtin
+kind: AnnotationsTransformer
+metadata:
+  name: longhorn-prerequisite-waves
+annotations:
+  argocd.argoproj.io/sync-wave: "-2"
+fieldSpecs:
+  - kind: CustomResourceDefinition
+    path: metadata/annotations
+    create: true
+  - kind: ServiceAccount
+    path: metadata/annotations
+    create: true
+  - kind: ClusterRole
+    path: metadata/annotations
+    create: true
+  - kind: ClusterRoleBinding
+    path: metadata/annotations
+    create: true
+  - kind: Role
+    path: metadata/annotations
+    create: true
+  - kind: RoleBinding
+    path: metadata/annotations
+    create: true

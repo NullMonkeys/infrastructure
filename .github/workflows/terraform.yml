@@ -1,0 +1,65 @@
+name: Terraform checks
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  validate:
+    name: Validate Terraform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Test deployment orchestration
+        run: python3 -m unittest discover -s scripts/tests -v
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.17.0"
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive terraform
+
+      - name: Set up tflint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: "0.59.1"
+
+      - name: Lint
+        run: |
+          tflint --init
+          tflint --recursive --format compact
+
+      - name: Initialize
+        run: terraform -chdir=terraform/live init -backend=false -input=false -no-color
+
+      - name: Validate
+        run: terraform -chdir=terraform/live validate -no-color
+
+      - name: Test with mocked providers
+        run: |
+          terraform -chdir=terraform/live test -no-color
+          for module in terraform/modules/*; do
+            terraform -chdir="$module" init -backend=false -input=false -no-color
+            terraform -chdir="$module" test -no-color
+          done

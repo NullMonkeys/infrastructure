@@ -1,0 +1,104 @@
+- name: Wait for the configured data device
+  ansible.builtin.wait_for:
+    path: "{{ storage_volume.device }}"
+    timeout: "{{ storage_device_timeout }}"
+  when: not ansible_check_mode
+
+- name: Inspect disk layout and active mounts
+  ansible.builtin.command:
+    argv: [lsblk, --json, --paths, --output, 'NAME,TYPE,FSTYPE,UUID,MOUNTPOINTS,RO', '--', "{{ storage_volume.device }}"]
+  register: storage_layout
+  changed_when: false
+  check_mode: false
+
+- name: Resolve the destination without allowing symbolic-link redirects
+  ansible.builtin.command:
+    argv: [realpath, --canonicalize-missing, '--', "{{ storage_volume.mount_path }}"]
+  register: storage_destination
+  changed_when: false
+  check_mode: false
+
+- name: Require the exact configured destination
+  ansible.builtin.assert:
+    that:
+      - storage_destination.stdout == storage_volume.mount_path
+  tags: [storage_validation]
+
+- name: Inspect existing disk signatures without changing them
+  ansible.builtin.command:
+    argv: [wipefs, --json, --no-act, '--', "{{ storage_volume.device }}"]
+  register: storage_signatures
+  changed_when: false
+  check_mode: false
+
+- name: Check whether the destination is already mounted
+  ansible.builtin.command:
+    argv: [findmnt, --noheadings, --raw, --mountpoint, "{{ storage_volume.mount_path }}", --output, UUID]
+  register: storage_current_mount
+  changed_when: false
+  failed_when: storage_current_mount.rc not in [0, 1]
+  check_mode: false
+
+- name: Inspect the mount directory without following symbolic links
+  ansible.builtin.stat:
+    path: "{{ storage_volume.mount_path }}"
+    follow: false
+  register: storage_directory
+
+- name: Require a real directory at the mount path
+  ansible.builtin.assert:
+    that:
+      - not storage_directory.stat.exists or (storage_directory.stat.isdir | default(false) and not storage_directory.stat.islnk | default(false))
+  tags: [storage_validation]
+
+- name: Look for files that a new mount would hide
+  ansible.builtin.find:
+    paths: "{{ storage_volume.mount_path }}"
+    hidden: true
+    file_type: any
+    recurse: false
+  register: storage_contents
+  when: storage_directory.stat.exists and storage_current_mount.rc == 1
+
+- name: Validate disk and destination before changing storage
+  ansible.builtin.assert:
+    that:
+      - storage_contents.skipped_paths | default({}) | length == 0
+      - >-
+        (storage_layout.stdout | from_json) | storage_device_valid(
+        storage_signatures.stdout | from_json, storage_volume.mount_path,
+        storage_current_mount.stdout | trim, storage_current_mount.rc == 0,
+        storage_contents.matched | default(0))
+  tags: [storage_validation]
+
+- name: Create ext4 only on an unformatted data disk
+  community.general.filesystem:
+    dev: "{{ storage_volume.device }}"
+    fstype: ext4
+    force: false
+  when: (storage_layout.stdout | from_json).blockdevices[0].fstype is none
+
+- name: Read the filesystem UUID
+  ansible.builtin.command:
+    argv: [blkid, -s, UUID, -o, value, '--', "{{ storage_volume.device }}"]
+  register: storage_uuid
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode or (storage_layout.stdout | from_json).blockdevices[0].fstype == 'ext4'
+
+- name: Require a nonempty filesystem UUID
+  ansible.builtin.assert:
+    that:
+      - storage_uuid.stdout | trim | length > 0
+  when: not ansible_check_mode or (storage_layout.stdout | from_json).blockdevices[0].fstype == 'ext4'
+
+- name: Mount ext4 and persist it across reboots
+  ansible.posix.mount:
+    path: "{{ storage_volume.mount_path }}"
+    src: "UUID={{ storage_uuid.stdout | trim }}"
+    fstype: ext4
+    opts: defaults,_netdev,nofail
+    passno: '2'
+    state: mounted
+    backup: true
+  when: not ansible_check_mode or (storage_layout.stdout | from_json).blockdevices[0].fstype == 'ext4'

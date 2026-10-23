@@ -1,0 +1,70 @@
+name: Kubernetes checks
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: kubernetes-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate Kubernetes manifests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install validation dependencies
+        run: python -m pip install -r kubernetes/requirements.txt
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.5
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5.0.1
+        with:
+          version: v3.22.1
+
+      - name: Prepare manifests and schemas
+        id: manifests
+        run: |
+          python -m scripts.check_gitops --prepare-only .generated/gitops
+          echo "kubernetes-version=$(cat .generated/gitops/kubernetes-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Validate manifests
+        uses: docker://ghcr.io/yannh/kubeconform:v0.8.0
+        with:
+          entrypoint: /kubeconform
+          args: >-
+            -strict -summary
+            -kubernetes-version ${{ steps.manifests.outputs.kubernetes-version }}
+            -schema-location default
+            -schema-location .generated/gitops/schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
+            .generated/gitops/manifests.yaml
+
+      - name: Check GitOps validation guards
+        env:
+          KUBECTL_BIN: kubectl
+          HELM_BIN: helm
+        run: python -m unittest discover -s scripts/tests -p test_gitops.py -v

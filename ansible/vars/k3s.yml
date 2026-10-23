@@ -1,0 +1,16 @@
+k3s_version: v1.36.5+k3s1
+k3s_installer_sha256: 46177d4c99440b4c0311b67233823a8e8a2fc09693f6c89af1a7161e152fbfad
+k3s_bootstrap_host: "{{ groups['control_plane'] | sort | first }}"
+k3s_bootstrap_ip: "{{ hostvars[k3s_bootstrap_host].private_ip }}"
+k3s_pod_cidr: 10.42.0.0/16
+k3s_service_cidr: 10.43.0.0/16
+k3s_cluster_dns: 10.43.0.10
+k3s_cluster_domain: cluster.local
+k3s_disabled_components: [traefik, servicelb, local-storage]
+k3s_extra_tls_sans: []
+k3s_image_gc_high_threshold: 70
+k3s_image_gc_low_threshold: 60
+k3s_image_gc_minimum_age: 10m
+k3s_image_gc_maximum_age: 24h
+k3s_network_check_namespace: cluster-network-check
+k3s_network_check_image: docker.io/library/busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e

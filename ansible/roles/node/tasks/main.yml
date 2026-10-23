@@ -1,0 +1,63 @@
+- name: Require Ubuntu hosts and complete volume metadata
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Ubuntu'
+      - block_volumes is defined
+      - block_volumes is mapping
+      - storage_mounts is mapping
+      - block_volumes | length <= 1 or block_volumes.keys() | difference(storage_mounts.keys()) | length == 0
+    fail_msg: >-
+      Use Ubuntu and inventory from the current Terraform outputs. Multiple data
+      volumes require an explicit storage_mounts entry for each volume.
+  tags: [storage_validation]
+
+- name: Disable IPv6 before configuring the host
+  ansible.builtin.import_tasks: ipv6.yml
+
+- name: Install base and Longhorn prerequisite packages
+  ansible.builtin.apt:
+    name: "{{ node_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Enable the iSCSI daemon for future Longhorn volumes
+  ansible.builtin.systemd_service:
+    name: iscsid
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Load the iSCSI transport now and at boot
+  community.general.modprobe:
+    name: iscsi_tcp
+    state: present
+    persistent: present
+  when: not ansible_check_mode
+
+- name: Build storage targets
+  ansible.builtin.set_fact:
+    storage_targets: []
+
+- name: Resolve mount paths by volume name
+  ansible.builtin.set_fact:
+    storage_targets: >-
+      {{ storage_targets + [item.value | combine({'name': item.key,
+      'mount_path': storage_mounts.get(item.key, storage_mount_path)})] }}
+  loop: "{{ block_volumes | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Validate storage target configuration
+  ansible.builtin.assert:
+    that:
+      - storage_targets | storage_targets_valid
+  tags: [storage_validation]
+
+- name: Prepare attached data volumes
+  ansible.builtin.include_tasks: storage.yml
+  loop: "{{ storage_targets }}"
+  loop_control:
+    loop_var: storage_volume
+    label: "{{ storage_volume.name }}"

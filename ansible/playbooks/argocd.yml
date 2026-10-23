@@ -1,0 +1,6 @@
+- name: Bootstrap Argo CD and repository reconciliation
+  hosts: k3s_bootstrap
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  roles: [infisical, argocd]

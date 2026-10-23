@@ -1,0 +1,41 @@
+---
+provider:
+  name: cloudflare
+
+sources: [service, ingress, traefik-proxy]
+domainFilters: [nullmonkeys.com]
+managedRecordTypes: [A, CNAME]
+policy: sync
+registry: txt
+txtOwnerId: nullmonkeys-k3s
+txtPrefix: external-dns-
+interval: 1m
+
+env:
+  - name: CF_API_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: external-dns-secrets
+        key: cloudflare-api-token
+  - name: CF_ZONE_ID
+    valueFrom:
+      secretKeyRef:
+        name: external-dns-secrets
+        key: cloudflare-zone-id
+
+extraArgs:
+  - --zone-id-filter=$(CF_ZONE_ID)
+  - --exclude-target-net=10.0.0.0/8
+  - --exclude-target-net=172.16.0.0/12
+  - --exclude-target-net=192.168.0.0/16
+  - --exclude-target-net=100.64.0.0/10
+  - --exclude-target-net=127.0.0.0/8
+  # Boolean flags must be bare with this CLI, not --cloudflare-proxied=true.
+  - --cloudflare-proxied
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

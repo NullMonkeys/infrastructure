@@ -1,0 +1,19 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+
+metadata:
+  name: infrastructure
+  namespace: argocd
+
+spec:
+  sourceRepos:
+    - https://github.com/NullMonkeys/infrastructure.git
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
