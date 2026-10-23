@@ -4,8 +4,20 @@ The active Kustomize overlay is `postgres/patch-recovery.yaml`. It restores the
 existing `authentik` database and owner from the `authentik-db` archive in
 `s3://nm-authentik-pg` on Backblaze B2. It does not initialize an empty database.
 
-The restored cluster writes its new WAL files and backups to the separate
-`authentik-db-restored-20261023` server prefix in the same bucket. The original
+Argo creates the Infisical secret sync in wave `-2` and waits for successful
+synchronization before creating the database in wave `-1`. Authentik Deployments
+follow in wave `1`. The recovery Job needs `authentik-secrets` to read the archive;
+placing the secret sync after the database blocks a fresh bootstrap.
+
+If recovery exhausts its retries, CloudNativePG reports the Cluster as
+unrecoverable and Argo displays `Suspended`. Inspect the recovery Job logs for the
+underlying error. For a missing `authentik-secrets` Secret, first synchronize the
+Infisical resource and verify the required credential keys exist. Once the cause
+is corrected, an authorized recovery can remove only the failed recovery Job so
+CloudNativePG retries; preserve the Cluster, PVCs, and backup archive.
+
+The restored cluster is configured to write its new WAL files and backups to the
+separate `authentik-db-restored` server prefix in the same bucket. The original
 source archive remains unchanged. Credentials come from the existing
 `/k3s/authentik` Infisical path and must permit access to both prefixes.
 
@@ -16,9 +28,9 @@ WAL files or set `cnpg.io/skipEmptyWalArchiveCheck` to bypass it.
 
 For a future restore, select the desired source prefix in
 `externalClusters[].barmanObjectStore.serverName` and a new, unused destination
-prefix in `backup.barmanObjectStore.serverName`. The date suffix identifies this
-restore incarnation; do not reuse it for another fresh cluster. Normal restarts
-of this existing cluster retain their configured destination prefix.
+prefix in `backup.barmanObjectStore.serverName`. Do not reuse a destination prefix
+for another fresh cluster. Normal restarts of an existing cluster retain their
+configured destination prefix.
 
 After changing a failed bootstrap configuration, allow Argo to sync the Cluster
 and inspect CloudNativePG's recovery Job. A failed Job created before the change

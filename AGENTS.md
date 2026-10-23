@@ -34,7 +34,15 @@ Use Python `unittest` with files named `test_*.py` and mocked Terraform suites n
 
 ## Commit & Pull Request Guidelines
 
-Recent history mostly uses `wip`; no consistent formal convention is established. Prefer concise, imperative messages describing the change. PRs should explain behavior, operational impact, relevant issues, and checks run or skipped. Update affected guides and pass Terraform, Ansible, and Kubernetes CI checks as applicable.
+Use Conventional Commit messages: `<type>: <summary>` or `<type>(<scope>): <summary>`. Common types are `feat`, `fix`, `docs`, `refactor`, `test`, `ci`, and `chore`. The optional scope identifies the affected service or component. Keep summaries concise and imperative.
+
+Examples:
+
+- `feat: add worker nodes`
+- `fix(authentik): sync credentials before database recovery`
+- `docs: clarify deployment prerequisites`
+
+PRs should explain behavior, operational impact, relevant issues, and checks run or skipped. Update affected guides and pass Terraform, Ansible, and Kubernetes CI checks as applicable.
 
 ## Security & Deployment Boundaries
 

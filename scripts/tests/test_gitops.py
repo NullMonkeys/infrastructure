@@ -395,6 +395,31 @@ class GitOpsTests(unittest.TestCase):
             elif doc["kind"] in {"Deployment", "DaemonSet", "StatefulSet"}:
                 self.assertGreater(wave, checker_wave)
 
+    def test_authentik_credentials_sync_before_database_recovery_and_deployments(self):
+        documents = self.bundles["kubernetes/workloads/authentik"]
+        sync = next(doc for doc in documents if doc["kind"] == "InfisicalStaticSecret")
+        cluster = next(doc for doc in documents if doc["kind"] == "Cluster")
+
+        def wave(document):
+            return int(document["metadata"].get("annotations", {}).get(
+                "argocd.argoproj.io/sync-wave", "0"
+            ))
+
+        targets = {target["name"] for target in sync["spec"]["targets"]}
+        spec = cluster["spec"]
+        recovery_source = next(
+            source for source in spec["externalClusters"]
+            if source["name"] == spec["bootstrap"]["recovery"]["source"]
+        )
+        for archive in (spec["backup"], recovery_source):
+            for reference in archive["barmanObjectStore"]["s3Credentials"].values():
+                self.assertIn(reference["name"], targets)
+        self.assertLess(wave(sync), wave(cluster))
+        deployments = [doc for doc in documents if doc["kind"] == "Deployment"]
+        self.assertTrue(deployments)
+        for deployment in deployments:
+            self.assertLess(wave(cluster), wave(deployment))
+
     def test_authentik_recovery_keeps_source_and_destination_archives_separate(self):
         cluster = next(
             doc for doc in self.bundles["kubernetes/workloads/authentik"]
