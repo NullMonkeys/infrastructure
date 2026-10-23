@@ -227,6 +227,17 @@ class GitOpsTests(unittest.TestCase):
         )
         self.assertTrue(oidc["insecureEnableGroups"])
         self.assertEqual(set(oidc["scopes"]), {"openid", "profile", "email"})
+        server = next(
+            doc for doc in documents
+            if doc["kind"] == "Deployment"
+            and doc["metadata"]["name"] == "argocd-server"
+        )
+        self.assertEqual(
+            server["spec"]["template"]["metadata"]["annotations"][
+                "nullmonkeys.com/sso-provider"
+            ],
+            connector["id"],
+        )
         sync = next(doc for doc in documents if doc["kind"] == "InfisicalStaticSecret")
         target = sync["spec"]["targets"][0]
         for field, key in (("clientID", "client-id"), ("clientSecret", "client-secret")):
@@ -244,6 +255,9 @@ class GitOpsTests(unittest.TestCase):
             "argocd.argoproj.io/sync-wave", "0"
         ))
         self.assertLess(sync_wave, config_wave)
+        self.assertLess(config_wave, int(server["metadata"]["annotations"][
+            "argocd.argoproj.io/sync-wave"
+        ]))
         rbac = next(
             doc for doc in documents
             if doc["kind"] == "ConfigMap" and doc["metadata"]["name"] == "argocd-rbac-cm"

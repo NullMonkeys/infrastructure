@@ -198,6 +198,15 @@ update the connector issuer in `kubernetes/platform/argocd/config.yaml` to match
 
 Authentik reconciles before Argo self-management so Dex's provider discovery
 cannot hold up deployment of its own identity provider on a fresh cluster.
+The server Deployment follows the SSO ConfigMap at resource wave `1`. Its
+`nullmonkeys.com/sso-provider: authentik` pod annotation forces a rollout when
+adopting SSO on an existing installation. Argo CD 3.5.6's configuration reload
+rebuilds the login handler but retains the session manager created at process
+startup. Without a new process, login can succeed and then immediately fail
+session validation with `x509: certificate signed by unknown authority` against
+the Dex discovery endpoint. Keep the rollout marker and ordering when
+rebuilding the cluster; a configuration reload alone is insufficient for this
+transition. TLS settings and certificate verification stay unchanged.
 The local `admin` account remains available for initial bootstrap and recovery;
 it bypasses Authentik's group gate. Its password is managed as described above.
 

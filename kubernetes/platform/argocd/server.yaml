@@ -4,9 +4,14 @@ kind: Deployment
 
 metadata:
   name: argocd-server
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 
 spec:
   template:
+    metadata:
+      annotations:
+        nullmonkeys.com/sso-provider: authentik
     spec:
       containers:
         - name: argocd-server
