@@ -90,6 +90,9 @@ are silently skipped. These are public downloads; validation does not use a
 kubeconfig, authenticate to the repo, or contact hosts.
 `LUA_BIN=lua` additionally executes the Infisical readiness health check against
 pending, stale, failed, and successful reconciliation fixtures.
+`ARGOCD_BIN=argocd` also checks the rendered SSO policy with Argo's local RBAC
+engine: `NullMonkeys` can read, sync, and delete applications; an unrelated
+subject cannot. These checks use a local policy file and do not contact a cluster.
 See [GitOps setup](gitops.md) for live reconciliation and UI access.
 
 ## Terraform

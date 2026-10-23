@@ -26,7 +26,8 @@ Secret. Preserve that policy and the one-hour refresh interval when moving files
 ## Machine identity bootstrap
 
 Use an Infisical machine identity with Universal Auth and read-only access to the
-production path above and `/k3s/external-dns` for DNS automation. Restrict its scope
+production paths used by consumers: `/k3s/cert-manager`, `/k3s/external-dns`,
+`/k3s/authentik`, and `/k3s/argocd`. Restrict its scope
 to those paths/environment; do not grant
 secret-writing or organization administration permissions. Universal Auth allows
 Infisical Cloud to authenticate the operator without reaching the private K3s API.
@@ -54,7 +55,10 @@ It is not a tenant isolation boundary. The machine identity's Infisical permissi
 still determine what it can fetch.
 
 Argo starts the Infisical service and Traefik at wave `-10`, ExternalDNS and
-cert-manager at `-9`, and its own certificate/ingress at `-1`. Inside cert-manager's Application, the
+cert-manager at `-9`, Authentik at `-2`, and its own certificate/ingress at `-1`.
+Argo's OIDC client credentials come from `/k3s/argocd`; see
+[Authentik SSO](gitops.md#authentik-sso) for the keys and provider settings.
+Inside cert-manager's Application, the
 Cloudflare sync is at resource wave `0` and the ACME issuer follows at `1`.
 The custom InfisicalStaticSecret health check waits for a successful reconciliation
 of the current generation. On an existing installation the health customization

@@ -210,6 +210,86 @@ class GitOpsTests(unittest.TestCase):
             application["spec"]["syncPolicy"]["syncOptions"],
         )
 
+    def test_argocd_oidc_uses_synced_credentials_and_waits_for_authentik(self):
+        import yaml
+
+        documents = self.bundles["kubernetes/platform/argocd"]
+        config = next(
+            doc for doc in documents
+            if doc["kind"] == "ConfigMap" and doc["metadata"]["name"] == "argocd-cm"
+        )
+        self.assertEqual(config["data"]["users.anonymous.enabled"], "false")
+        connector = yaml.safe_load(config["data"]["dex.config"])["connectors"][0]
+        self.assertEqual(connector["type"], "oidc")
+        oidc = connector["config"]
+        self.assertEqual(
+            oidc["issuer"], "https://auth.nullmonkeys.com/application/o/argocd/"
+        )
+        self.assertTrue(oidc["insecureEnableGroups"])
+        self.assertEqual(set(oidc["scopes"]), {"openid", "profile", "email"})
+        sync = next(doc for doc in documents if doc["kind"] == "InfisicalStaticSecret")
+        target = sync["spec"]["targets"][0]
+        for field, key in (("clientID", "client-id"), ("clientSecret", "client-secret")):
+            self.assertEqual(oidc[field], f"${target['name']}:{key}")
+        self.assertNotEqual(target["name"], "argocd-secret")
+        self.assertEqual(target["namespace"], config["metadata"]["namespace"])
+        self.assertEqual(target["kind"], "Secret")
+        self.assertEqual(target["creationPolicy"], "Owner")
+        self.assertEqual(
+            target["metadata"]["labels"]["app.kubernetes.io/part-of"], "argocd"
+        )
+        self.assertEqual(sync["spec"]["sources"][0]["secretPath"], "/k3s/argocd")
+        sync_wave = int(sync["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"])
+        config_wave = int(config["metadata"].get("annotations", {}).get(
+            "argocd.argoproj.io/sync-wave", "0"
+        ))
+        self.assertLess(sync_wave, config_wave)
+        rbac = next(
+            doc for doc in documents
+            if doc["kind"] == "ConfigMap" and doc["metadata"]["name"] == "argocd-rbac-cm"
+        )["data"]
+        self.assertEqual(rbac["policy.default"], "")
+        self.assertEqual(rbac["policy.csv"].strip(), "g, NullMonkeys, role:admin")
+        self.assertEqual(yaml.safe_load(rbac["scopes"]), ["groups"])
+        applications = {
+            doc["metadata"]["name"]: int(
+                doc["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"]
+            )
+            for doc in self.bundles["kubernetes/bootstrap/applications"]
+        }
+        self.assertLess(applications["infisical"], applications["authentik"])
+        self.assertLess(applications["cloudnative-pg"], applications["authentik"])
+        self.assertLess(applications["authentik"], applications["argocd"])
+
+    def test_argocd_rbac_grants_admin_only_to_nullmonkeys(self):
+        import yaml
+
+        argocd = os.environ.get("ARGOCD_BIN")
+        if not argocd:
+            self.skipTest("Set ARGOCD_BIN to check SSO permissions with Argo's RBAC engine.")
+        rbac = next(
+            doc for doc in self.bundles["kubernetes/platform/argocd"]
+            if doc["kind"] == "ConfigMap" and doc["metadata"]["name"] == "argocd-rbac-cm"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            policy = Path(temporary) / "argocd-rbac-cm.yaml"
+            policy.write_text(yaml.safe_dump(rbac))
+            command = [argocd, "admin", "settings", "rbac"]
+            subprocess.run(
+                [*command, "validate", "--policy-file", str(policy)],
+                check=True, capture_output=True, text=True,
+            )
+            for subject, expected in (("NullMonkeys", "Yes"), ("outsider", "No")):
+                for action in ("get", "sync", "delete"):
+                    with self.subTest(subject=subject, action=action):
+                        result = subprocess.run(
+                            [*command, "can", subject, action, "applications",
+                             "infrastructure/example", "--policy-file", str(policy)],
+                            capture_output=True, text=True,
+                        )
+                        self.assertEqual(result.stdout.strip(), expected, result.stderr)
+                        self.assertEqual(result.returncode, 0 if expected == "Yes" else 1)
+
     def test_dns_challenge_uses_the_secret_synced_for_cert_manager(self):
         issuer = next(
             doc

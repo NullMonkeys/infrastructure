@@ -9,6 +9,21 @@ metadata:
 
 data:
   url: https://argocd.nullmonkeys.com
+  users.anonymous.enabled: "false"
+  dex.config: |
+    connectors:
+      - type: oidc
+        id: authentik
+        name: Authentik
+        config:
+          issuer: https://auth.nullmonkeys.com/application/o/argocd/
+          clientID: $argocd-oidc:client-id
+          clientSecret: $argocd-oidc:client-secret
+          insecureEnableGroups: true
+          scopes:
+            - openid
+            - profile
+            - email
   timeout.reconciliation: 120s
   resource.customizations.health.argoproj.io_Application: |
     local health = {status = "Progressing", message = "Waiting for application reconciliation"}

@@ -32,7 +32,7 @@ that folder includes the operator and its connection/authentication resources to
 
 The root Application `cluster` watches only `kubernetes/bootstrap/applications/`. Infisical
 and Traefik start at wave `-10`, ExternalDNS, cert-manager and Longhorn at `-9`, monitoring at
-`-8`, CNPG at `-7`, Argo self-management at `-1`, and Authentik at `0`.
+`-8`, CNPG at `-7`, Authentik at `-2`, and Argo self-management at `-1`.
 Monitoring installs its CRDs before CNPG creates PodMonitors; Longhorn is ready
 before monitoring requests persistent volumes.
 Inside cert-manager, the Cloudflare secret sync is at resource wave `0` and
@@ -96,8 +96,8 @@ Argo may report it missing until that pipeline step completes.
 
 The UI and native Argo CLI use **https://argocd.nullmonkeys.com**. Argo's Service
 stays ClusterIP. Traefik terminates TLS and forwards HTTP to Argo; a separate,
-higher-priority route forwards native gRPC using h2c. Local Argo authentication
-remains enabled; Authentik is not configured yet.
+higher-priority route forwards native gRPC using h2c. Authentik provides OIDC
+through Argo's bundled Dex; see [SSO configuration](#authentik-sso).
 
 Cert-manager requests and renews a Let's Encrypt production certificate using
 Cloudflare DNS-01, registered to `no-reply@nullmonkeys.com`. The Cloudflare API token
@@ -146,6 +146,75 @@ ssh -t -L 8080:127.0.0.1:8080 ubuntu@<control-plane-public-ip> \
 
 Open `http://localhost:8080`; the tunnel encrypts the connection. This HTTP backend
 is intentional after TLS termination moves to Traefik.
+
+## Authentik SSO
+
+Argo uses the existing Authentik instance at `https://auth.nullmonkeys.com`.
+The bundled Dex connector supports both browser and CLI login with the same
+confidential OAuth2 client. No Argo users, custom roles, or UI-created settings
+are needed. `argocd-rbac-cm` maps the existing `NullMonkeys` group to Argo's
+built-in `role:admin`, granting unrestricted access. Other SSO users receive no
+default permissions, and anonymous access is disabled.
+
+In the existing Infisical project, environment `prod`, populate `/k3s/argocd`:
+
+| Key             | Value                                   |
+| --------------- | --------------------------------------- |
+| `client-id`     | Authentik Argo CD provider's client ID   |
+| `client-secret` | That provider's client secret           |
+
+Give the operator's existing machine identity read access to this path.
+`kubernetes/platform/argocd/secrets.yaml` syncs it hourly into the separate
+`argocd/argocd-oidc` Secret. Its `app.kubernetes.io/part-of: argocd` label lets
+Argo resolve both credential references without putting their values in Git or
+overwriting `argocd-secret` (which also holds Argo's signing key and admin password).
+The sync runs before Argo's configuration resources. Secret updates are watched
+by Argo; a subsequent sync can take up to an hour after an Infisical rotation.
+
+The Authentik application/provider must match these settings:
+
+| Setting                | Value                                                    |
+| ---------------------- | -------------------------------------------------------- |
+| Application slug       | `argocd`                                                 |
+| Provider type          | OAuth2/OpenID Connect, confidential client                |
+| Issuer mode            | Per-provider (default)                                   |
+| Issuer                 | `https://auth.nullmonkeys.com/application/o/argocd/`        |
+| Authorization redirect | Strict: `https://argocd.nullmonkeys.com/api/dex/callback`   |
+| Scope mappings         | `openid`, `profile`, `email`                              |
+| Signing key            | An available Authentik signing key                       |
+| Application binding    | Existing `NullMonkeys` group only                         |
+
+Keep the default `profile` mapping, which includes the `groups` claim, or an
+equivalent mapping that emits `NullMonkeys` in `groups`. Dex explicitly enables
+group forwarding. The Authentik binding controls sign-in; the declarative Argo
+mapping grants application permissions. The extra Admins/Viewers groups in the
+integration guide are optional; this setup uses neither.
+
+This repository configures the Argo side. The existing Authentik provider,
+application, group, and access binding are retained in the recovered Authentik
+database; they are not created by these manifests. Keep them in the database
+backup for a cluster rebuild. If the application's existing slug differs,
+update the connector issuer in `kubernetes/platform/argocd/config.yaml` to match.
+
+Authentik reconciles before Argo self-management so Dex's provider discovery
+cannot hold up deployment of its own identity provider on a fresh cluster.
+The local `admin` account remains available for initial bootstrap and recovery;
+it bypasses Authentik's group gate. Its password is managed as described above.
+
+After an authorized deployment, verify the Infisical sync is healthy without
+printing credential values, then use **Log in via Authentik** or:
+
+```sh
+argocd login argocd.nullmonkeys.com --sso --grpc-web
+```
+
+Verify a `NullMonkeys` member can administer applications and a non-member is
+rejected by Authentik. Group changes take effect on a new login; existing Dex
+sessions keep their group claims until reauthentication.
+
+References: [Authentik Argo CD integration](https://integrations.goauthentik.io/infrastructure/argocd/),
+[Argo secret references](https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/#sensitive-data-and-sso-client-secrets),
+[Argo built-in roles](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/#basic-built-in-roles).
 
 ## Changes, validation, and deletion
 
