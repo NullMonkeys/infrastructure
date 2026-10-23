@@ -4,6 +4,9 @@ kind: Kustomization
 
 namespace: kube-prometheus-stack
 
+resources:
+  - secrets.yaml
+
 helmCharts:
   - name: kube-prometheus-stack
     repo: oci://ghcr.io/prometheus-community/charts
