@@ -1,5 +1,7 @@
 # Authentik database recovery
 
+For application access control, see [Longhorn UI authentication](longhorn.md).
+
 The active Kustomize overlay is `postgres/patch-recovery.yaml`. It restores the
 existing `authentik` database and owner from the `authentik-db` archive in
 `s3://nm-authentik-pg` on Backblaze B2. It does not initialize an empty database.

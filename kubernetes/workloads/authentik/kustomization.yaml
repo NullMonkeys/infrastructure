@@ -6,6 +6,7 @@ namespace: authentik
 
 resources:
   - secrets.yaml
+  - longhorn-outpost-ingress.yaml
   - postgres/cluster.yaml
   - postgres/backup.yaml
 

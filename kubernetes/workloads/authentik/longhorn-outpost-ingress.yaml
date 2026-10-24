@@ -1,0 +1,31 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+
+metadata:
+  name: longhorn-outpost
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    external-dns.kubernetes.io/target: ingress.nullmonkeys.com
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.priority: "20"
+
+spec:
+  ingressClassName: traefik
+
+  rules:
+    - host: longhorn.nullmonkeys.com
+      http:
+        paths:
+          - path: /outpost.goauthentik.io/
+            pathType: Prefix
+            backend:
+              service:
+                name: authentik-server
+                port:
+                  number: 80
+
+  tls:
+    - secretName: longhorn-outpost-tls
+      hosts:
+        - longhorn.nullmonkeys.com

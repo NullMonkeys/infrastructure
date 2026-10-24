@@ -432,12 +432,71 @@ class GitOpsTests(unittest.TestCase):
             doc for bundle in self.bundles.values() for doc in bundle
             if doc["kind"] in ("Ingress", "IngressRoute")
         ]
-        self.assertEqual(len(routes), 4)
+        self.assertEqual(len(routes), 5)
         for route in routes:
             self.assertEqual(
                 route["metadata"]["annotations"]["external-dns.kubernetes.io/target"],
                 hostname,
             )
+
+    def test_longhorn_auth_covers_ui_and_api_without_intercepting_login_callbacks(self):
+        longhorn = self.bundles["kubernetes/platform/longhorn"]
+        authentik = self.bundles["kubernetes/workloads/authentik"]
+        ingress = next(doc for doc in longhorn if doc["kind"] == "Ingress")
+        middleware = next(doc for doc in longhorn if doc["kind"] == "Middleware")
+        namespace = ingress["metadata"]["namespace"]
+        self.assertEqual(middleware["metadata"]["namespace"], namespace)
+        annotations = ingress["metadata"]["annotations"]
+        self.assertEqual(
+            annotations["traefik.ingress.kubernetes.io/router.middlewares"],
+            f"{namespace}-{middleware['metadata']['name']}@kubernetescrd",
+        )
+        self.assertEqual(
+            annotations["traefik.ingress.kubernetes.io/router.entrypoints"], "websecure"
+        )
+        rule = ingress["spec"]["rules"][0]
+        self.assertEqual(
+            [(path["path"], path["pathType"]) for path in rule["http"]["paths"]],
+            [("/", "Prefix")],
+        )
+        callback = next(
+            doc for doc in authentik if doc["kind"] == "Ingress"
+            and doc["metadata"]["name"] == "longhorn-outpost"
+        )
+        callback_annotations = callback["metadata"]["annotations"]
+        self.assertNotIn(
+            "traefik.ingress.kubernetes.io/router.middlewares", callback_annotations
+        )
+        self.assertGreater(
+            int(callback_annotations["traefik.ingress.kubernetes.io/router.priority"]),
+            int(annotations["traefik.ingress.kubernetes.io/router.priority"]),
+        )
+        self.assertEqual(callback["spec"]["ingressClassName"], "traefik")
+        self.assertEqual(
+            callback_annotations["traefik.ingress.kubernetes.io/router.entrypoints"],
+            "websecure",
+        )
+        self.assertEqual(len(callback["spec"]["rules"]), 1)
+        callback_rule = callback["spec"]["rules"][0]
+        self.assertEqual(callback_rule["host"], rule["host"])
+        self.assertEqual(callback["spec"]["tls"][0]["hosts"], [rule["host"]])
+        self.assertEqual(len(callback_rule["http"]["paths"]), 1)
+        path = callback_rule["http"]["paths"][0]
+        self.assertEqual(path["path"], "/outpost.goauthentik.io/")
+        self.assertEqual(path["pathType"], "Prefix")
+        backend = path["backend"]["service"]
+        service = next(
+            doc for doc in authentik if doc["kind"] == "Service"
+            and doc["metadata"]["name"] == backend["name"]
+        )
+        self.assertEqual(service["metadata"]["namespace"], callback["metadata"]["namespace"])
+        port = backend["port"]["number"]
+        self.assertIn(port, [item["port"] for item in service["spec"]["ports"]])
+        self.assertEqual(
+            middleware["spec"]["forwardAuth"]["address"],
+            f"http://{backend['name']}.{service['metadata']['namespace']}"
+            f".svc.cluster.local:{port}/outpost.goauthentik.io/auth/traefik",
+        )
 
     def test_longhorn_checker_follows_prerequisites_and_precedes_workloads(self):
         documents = self.bundles["kubernetes/platform/longhorn"]

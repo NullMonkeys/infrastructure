@@ -28,8 +28,13 @@ ingress:
   enabled: true
   ingressClassName: traefik
   host: longhorn.nullmonkeys.com
+  path: /
+  pathType: Prefix
   tls: true
   tlsSecret: longhorn-tls
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     external-dns.kubernetes.io/target: ingress.nullmonkeys.com
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.priority: "10"
+    traefik.ingress.kubernetes.io/router.middlewares: longhorn-system-authentik@kubernetescrd
