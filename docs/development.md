@@ -13,7 +13,7 @@ Use versions matching the repository rather than whichever binary is installed:
 | ---------------------- | --------------------------------------------------------------------------------------------------- |
 | Terraform              | `terraform/**/versions.tf` and `.github/workflows/terraform.yml`                                    |
 | OCI and TFE providers  | `required_providers` and `terraform/live/.terraform.lock.hcl`                                       |
-| TFLint                 | `.tflint.hcl` and `.github/workflows/terraform.yml`                                                 |
+| TFLint                 | `tflint.required_version` in `.tflint.hcl`                                                         |
 | Ansible                | `ansible/requirements.txt`                                                                          |
 | Ansible collections    | `ansible/collections/requirements.yml`                                                              |
 | K3s and installer hash | `ansible/vars/k3s.yml`                                                                              |
@@ -96,6 +96,11 @@ subject cannot. These checks use a local policy file and do not contact a cluste
 See [GitOps setup](gitops.md) for live reconciliation and UI access.
 
 ## Terraform
+
+Install the exact TFLint release in `.tflint.hcl` before running these checks.
+The workflow reads that same `required_version` pin when installing TFLint, and
+Renovate updates it through the custom manager in `renovate.json`. Keep the
+requirement in `= X.Y.Z` form; no separate workflow version needs updating.
 
 These commands mirror the Terraform PR workflow:
 
