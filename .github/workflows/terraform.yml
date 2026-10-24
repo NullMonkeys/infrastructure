@@ -40,10 +40,29 @@ jobs:
       - name: Check formatting
         run: terraform fmt -check -recursive terraform
 
+      - name: Read TFLint version
+        id: tflint-version
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          versions = re.findall(
+              r'^\s*required_version\s*=\s*"= ([0-9]+\.[0-9]+\.[0-9]+)"\s*$',
+              Path(".tflint.hcl").read_text(),
+              re.MULTILINE,
+          )
+          if len(versions) != 1:
+              raise SystemExit("Expected one exact TFLint version (= X.Y.Z) in .tflint.hcl")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={versions[0]}\n")
+          PY
+
       - name: Set up tflint
         uses: terraform-linters/setup-tflint@v6
         with:
-          tflint_version: "0.65.0"
+          tflint_version: ${{ steps.tflint-version.outputs.version }}
 
       - name: Lint
         run: |
