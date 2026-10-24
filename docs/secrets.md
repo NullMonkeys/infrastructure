@@ -27,7 +27,7 @@ Secret. Preserve that policy and the one-hour refresh interval when moving files
 
 Use an Infisical machine identity with Universal Auth and read-only access to the
 production paths used by consumers: `/k3s/cert-manager`, `/k3s/external-dns`,
-`/k3s/authentik`, and `/k3s/argocd`. Restrict its scope
+`/k3s/authentik`, `/k3s/argocd`, and `/k3s/tailscale`. Restrict its scope
 to those paths/environment; do not grant
 secret-writing or organization administration permissions. Universal Auth allows
 Infisical Cloud to authenticate the operator without reaching the private K3s API.
@@ -54,8 +54,8 @@ administrative configuration.
 It is not a tenant isolation boundary. The machine identity's Infisical permissions
 still determine what it can fetch.
 
-Argo starts the Infisical service and Traefik at wave `-10`, ExternalDNS and
-cert-manager at `-9`, Authentik at `-2`, and its own certificate/ingress at `-1`.
+Argo starts the Infisical service and Traefik at wave `-10`, Tailscale, ExternalDNS
+and cert-manager at `-9`, Authentik at `-2`, and its own certificate/ingress at `-1`.
 Argo's OIDC client credentials come from `/k3s/argocd`; see
 [Authentik SSO](gitops.md#authentik-sso) for the keys and provider settings.
 Inside cert-manager's Application, the
@@ -64,6 +64,11 @@ The custom InfisicalStaticSecret health check waits for a successful reconciliat
 of the current generation. On an existing installation the health customization
 is adopted when Argo first syncs its updated configuration; controllers retry
 missing credentials and dependent certificates in the meantime.
+
+Tailscale syncs `/k3s/tailscale` into `tailscale/operator-oauth` at resource wave
+`-1`, before its operator starts. Store the OAuth credentials as `client-id` and
+`client-secret`; see [Tailscale setup](tailscale.md) for the tag policy, client
+permissions, and mounted filename mapping.
 
 ## Cloudflare token and DNS-01
 

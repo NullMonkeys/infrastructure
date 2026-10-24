@@ -18,6 +18,7 @@ kubernetes/
 │   ├── infisical/
 │   ├── cnpg/
 │   ├── longhorn/
+│   ├── tailscale/
 │   └── traefik/
 └── workloads/
     ├── authentik/
@@ -32,8 +33,9 @@ has a single Git source pointing at that service directory. For example,
 that folder includes the operator and its connection/authentication resources together.
 
 The root Application `cluster` watches only `kubernetes/bootstrap/applications/`. Infisical
-and Traefik start at wave `-10`, ExternalDNS, cert-manager and Longhorn at `-9`, monitoring at
-`-8`, CNPG at `-7`, Authentik at `-2`, Argo self-management at `-1`, and Pelican at `0`.
+and Traefik start at wave `-10`, ExternalDNS, cert-manager, Longhorn and Tailscale at
+`-9`, monitoring at `-8`, CNPG at `-7`, Authentik at `-2`, Argo self-management at
+`-1`, and Pelican at `0`.
 Bootstrap seeds missing ServiceMonitor/PodMonitor CRDs before root reconciliation,
 so each service can enable its chart-provided monitor. Monitoring manages the full
 CRD set; Longhorn is ready before monitoring requests persistent volumes.
@@ -44,6 +46,7 @@ Child Application health propagates to the root.
 
 See [monitoring](monitoring.md) for storage budgets, retention, metrics discovery,
 and local validation.
+See [Tailscale](tailscale.md) for operator credentials and tailnet registration.
 See [Authentik recovery](authentik.md) for the existing database restore source
 and the separate archive used by the restored cluster.
 See [Pelican Panel](pelican-panel.md) for its storage budget, update behavior,

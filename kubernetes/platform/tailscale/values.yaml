@@ -1,0 +1,20 @@
+---
+installCRDs: true
+
+oauthSecretVolume:
+  secret:
+    secretName: operator-oauth
+    items:
+      - key: client-id
+        path: client_id
+      - key: client-secret
+        path: client_secret
+
+operatorConfig:
+  hostname: tailscale-operator
+  defaultTags:
+    - tag:k8s-operator
+
+apiServerProxyConfig:
+  mode: "false"
+  allowImpersonation: "false"

@@ -346,6 +346,79 @@ class GitOpsTests(unittest.TestCase):
             int(issuer["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"]),
         )
 
+    def test_tailscale_uses_infisical_credentials_before_operator_startup(self):
+        documents = self.bundles["kubernetes/platform/tailscale"]
+        deployment = next(doc for doc in documents if doc["kind"] == "Deployment")
+        pod = deployment["spec"]["template"]["spec"]
+        container = next(item for item in pod["containers"] if item["name"] == "operator")
+        sync = next(doc for doc in documents if doc["kind"] == "InfisicalStaticSecret")
+        target = sync["spec"]["targets"][0]
+        self.assertEqual(sync["spec"]["infisicalAuthRef"], {
+            "name": "cluster-secrets", "namespace": "infisical-operator-system",
+        })
+        self.assertEqual(sync["spec"]["sources"][0]["secretPath"], "/k3s/tailscale")
+        self.assertEqual(sync["spec"]["sources"][0]["environmentSlug"], "prod")
+        self.assertEqual(sync["spec"]["syncOptions"]["refreshInterval"], "1h")
+        self.assertEqual(target["namespace"], deployment["metadata"]["namespace"])
+        self.assertEqual(target["kind"], "Secret")
+        self.assertEqual(target["creationPolicy"], "Owner")
+        volume = next(item for item in pod["volumes"] if item["name"] == "oauth")
+        self.assertEqual(volume["secret"]["secretName"], target["name"])
+        self.assertFalse(any(
+            doc["kind"] == "Secret" and doc["metadata"]["name"] == target["name"]
+            for doc in documents
+        ), "Only Infisical should own the OAuth Secret")
+        mount = next(item for item in container["volumeMounts"] if item["name"] == "oauth")
+        self.assertTrue(mount["readOnly"])
+        environment = {entry["name"]: entry.get("value") for entry in container["env"]}
+        paths = {item["key"]: item["path"] for item in volume["secret"]["items"]}
+        for key, variable in (
+            ("client-id", "CLIENT_ID_FILE"),
+            ("client-secret", "CLIENT_SECRET_FILE"),
+        ):
+            self.assertEqual(environment[variable], f"{mount['mountPath']}/{paths[key]}")
+        self.assertNotIn("CLIENT_SECRET", environment)
+
+        def wave(document):
+            return int(document["metadata"].get("annotations", {}).get(
+                "argocd.argoproj.io/sync-wave", "0"
+            ))
+
+        self.assertLess(wave(sync), wave(deployment))
+        applications = {
+            doc["metadata"]["name"]: doc
+            for doc in self.bundles["kubernetes/bootstrap/applications"]
+        }
+        self.assertLess(wave(applications["infisical"]), wave(applications["tailscale-operator"]))
+
+    def test_tailscale_installs_crds_without_enabling_api_access_or_proxies(self):
+        documents = self.bundles["kubernetes/platform/tailscale"]
+        deployment = next(doc for doc in documents if doc["kind"] == "Deployment")
+        self.assertEqual(deployment["spec"]["replicas"], 1)
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        environment = {entry["name"]: entry.get("value") for entry in container["env"]}
+        self.assertEqual(environment["OPERATOR_HOSTNAME"], "tailscale-operator")
+        self.assertEqual(environment["OPERATOR_INITIAL_TAGS"], "tag:k8s-operator")
+        self.assertEqual(environment["APISERVER_PROXY"], "false")
+        self.assertFalse(any(
+            "impersonate" in rule["verbs"]
+            for doc in documents if doc["kind"] in {"Role", "ClusterRole"}
+            for rule in doc.get("rules", [])
+        ))
+        crds = {doc["metadata"]["name"] for doc in documents if doc["kind"] == "CustomResourceDefinition"}
+        self.assertTrue({
+            "proxyclasses.tailscale.com", "connectors.tailscale.com",
+            "proxygroups.tailscale.com", "dnsconfigs.tailscale.com",
+            "recorders.tailscale.com", "tailnets.tailscale.com",
+        } <= crds)
+        ingress_class = next(doc for doc in documents if doc["kind"] == "IngressClass")
+        self.assertEqual(ingress_class["metadata"]["name"], "tailscale")
+        self.assertNotEqual(ingress_class["metadata"].get("annotations", {}).get(
+            "ingressclass.kubernetes.io/is-default-class"
+        ), "true")
+        self.assertFalse(any(doc["apiVersion"].startswith("tailscale.com/") for doc in documents))
+        self.assertFalse(any(doc["kind"] in {"Ingress", "StatefulSet"} for doc in documents))
+
     def test_external_dns_follows_ready_traefik_pods_and_scopes_ownership(self):
         documents = self.bundles["kubernetes/platform/external-dns"]
         deployment = next(doc for doc in documents if doc["kind"] == "Deployment")

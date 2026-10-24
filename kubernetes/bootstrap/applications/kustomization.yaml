@@ -6,6 +6,7 @@ resources:
   - infisical.yaml
   - traefik.yaml
   - external-dns.yaml
+  - tailscale.yaml
   - cert-manager.yaml
   - argocd.yaml
   - kube-prometheus-stack.yaml
