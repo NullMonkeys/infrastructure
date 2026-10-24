@@ -1,0 +1,15 @@
+---
+architecture: standalone
+
+commonAnnotations:
+  argocd.argoproj.io/sync-wave: "-1"
+
+auth:
+  enabled: false
+  sentinel: false
+
+master:
+  persistence:
+    enabled: true
+    storageClass: longhorn
+    size: 512Mi

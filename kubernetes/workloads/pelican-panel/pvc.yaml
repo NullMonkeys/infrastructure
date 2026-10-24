@@ -1,0 +1,59 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+
+metadata:
+  name: pelican-panel-data
+  namespace: pelican-panel
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+
+spec:
+  storageClassName: longhorn
+
+  accessModes:
+    - ReadWriteOnce
+
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+
+metadata:
+  name: pelican-panel-logs
+  namespace: pelican-panel
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+
+spec:
+  storageClassName: longhorn
+
+  accessModes:
+    - ReadWriteOnce
+
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+
+metadata:
+  name: pelican-panel-plugins
+  namespace: pelican-panel
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+
+spec:
+  storageClassName: longhorn
+
+  accessModes:
+    - ReadWriteOnce
+
+  resources:
+    requests:
+      storage: 1Gi

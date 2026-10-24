@@ -21,7 +21,8 @@ kubernetes/
 │   └── traefik/
 └── workloads/
     ├── authentik/
-    └── kube-prometheus-stack/
+    ├── kube-prometheus-stack/
+    └── pelican-panel/
 ```
 
 Each service directory has a `kustomization.yaml` listing its resources and, where
@@ -32,7 +33,7 @@ that folder includes the operator and its connection/authentication resources to
 
 The root Application `cluster` watches only `kubernetes/bootstrap/applications/`. Infisical
 and Traefik start at wave `-10`, ExternalDNS, cert-manager and Longhorn at `-9`, monitoring at
-`-8`, CNPG at `-7`, Authentik at `-2`, and Argo self-management at `-1`.
+`-8`, CNPG at `-7`, Authentik at `-2`, Argo self-management at `-1`, and Pelican at `0`.
 Bootstrap seeds missing ServiceMonitor/PodMonitor CRDs before root reconciliation,
 so each service can enable its chart-provided monitor. Monitoring manages the full
 CRD set; Longhorn is ready before monitoring requests persistent volumes.
@@ -45,6 +46,8 @@ See [monitoring](monitoring.md) for storage budgets, retention, metrics discover
 and local validation.
 See [Authentik recovery](authentik.md) for the existing database restore source
 and the separate archive used by the restored cluster.
+See [Pelican Panel](pelican-panel.md) for its storage budget, update behavior,
+health checks, and initial CLI administrator setup.
 
 All Applications, including the root, use the single `infrastructure` AppProject.
 It accepts manifests from this repository and permits any namespace and resource

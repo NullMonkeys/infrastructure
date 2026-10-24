@@ -12,3 +12,4 @@ resources:
   - longhorn.yaml
   - cnpg.yaml
   - authentik.yaml
+  - pelican-panel.yaml

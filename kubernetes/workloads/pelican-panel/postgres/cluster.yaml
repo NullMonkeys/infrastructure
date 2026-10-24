@@ -1,0 +1,42 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+
+metadata:
+  name: pelican-panel-db
+  namespace: pelican-panel
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+
+spec:
+  instances: 3
+
+  monitoring:
+    enablePodMonitor: true
+
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+
+  storage:
+    size: 5Gi
+    storageClass: longhorn
+
+  backup:
+    retentionPolicy: "3d"
+
+    barmanObjectStore:
+      destinationPath: s3://nm-pelican-panel-pg
+      endpointURL: https://s3.eu-central-003.backblazeb2.com
+
+      s3Credentials:
+        accessKeyId:
+          name: pelican-panel-secrets
+          key: backblaze-b2-access-key
+        secretAccessKey:
+          name: pelican-panel-secrets
+          key: backblaze-b2-secret-key
+
+      wal:
+        compression: gzip
+        maxParallel: 8

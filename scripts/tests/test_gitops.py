@@ -432,12 +432,101 @@ class GitOpsTests(unittest.TestCase):
             doc for bundle in self.bundles.values() for doc in bundle
             if doc["kind"] in ("Ingress", "IngressRoute")
         ]
-        self.assertEqual(len(routes), 5)
+        ingress_hosts = {
+            rule["host"]
+            for route in routes if route["kind"] == "Ingress"
+            for rule in route["spec"]["rules"]
+        }
+        self.assertEqual(ingress_hosts, {
+            "auth.nullmonkeys.com", "grafana.nullmonkeys.com",
+            "longhorn.nullmonkeys.com", "pelican.nullmonkeys.com",
+        })
+        ingress_routes = [route for route in routes if route["kind"] == "IngressRoute"]
+        self.assertTrue(ingress_routes)
+        for route in ingress_routes:
+            for rule in route["spec"]["routes"]:
+                self.assertIn("Host(`argocd.nullmonkeys.com`)", rule["match"])
         for route in routes:
             self.assertEqual(
                 route["metadata"]["annotations"]["external-dns.kubernetes.io/target"],
                 hostname,
             )
+
+    def test_pelican_syncs_secrets_then_database_and_redis_before_the_panel(self):
+        documents = self.bundles["kubernetes/workloads/pelican-panel"]
+        sync = next(doc for doc in documents if doc["kind"] == "InfisicalStaticSecret")
+        cluster = next(doc for doc in documents if doc["kind"] == "Cluster")
+        panel = next(doc for doc in documents if doc["kind"] == "Deployment")
+        redis_resources = [
+            doc for doc in documents
+            if doc["metadata"].get("labels", {}).get("app.kubernetes.io/instance") == "redis"
+        ]
+
+        def wave(document):
+            return int(document["metadata"].get("annotations", {}).get(
+                "argocd.argoproj.io/sync-wave", "0"
+            ))
+
+        self.assertLess(wave(sync), wave(cluster))
+        self.assertTrue(redis_resources)
+        self.assertIn("StatefulSet", {doc["kind"] for doc in redis_resources})
+        for document in redis_resources:
+            with self.subTest(kind=document["kind"], name=document["metadata"]["name"]):
+                self.assertEqual(wave(document), wave(cluster))
+                self.assertLess(wave(document), wave(panel))
+        for document in documents:
+            if document["kind"] == "PersistentVolumeClaim":
+                self.assertLess(wave(document), wave(panel))
+
+    def test_pelican_rollouts_keep_a_single_writer_for_rwo_storage(self):
+        documents = self.bundles["kubernetes/workloads/pelican-panel"]
+        deployment = next(doc for doc in documents if doc["kind"] == "Deployment")
+        self.assertEqual(deployment["spec"]["replicas"], 1)
+        self.assertEqual(deployment["spec"]["strategy"]["type"], "Recreate")
+        pod = deployment["spec"]["template"]["spec"]
+        self.assertEqual(pod["securityContext"]["fsGroup"], 82)
+        claims = {
+            doc["metadata"]["name"]: doc["spec"] for doc in documents
+            if doc["kind"] == "PersistentVolumeClaim"
+        }
+        self.assertEqual(set(claims), {
+            volume["persistentVolumeClaim"]["claimName"]
+            for volume in pod["volumes"]
+        })
+        for claim in claims.values():
+            self.assertEqual(claim["accessModes"], ["ReadWriteOnce"])
+            self.assertEqual(claim["storageClassName"], "longhorn")
+
+    def test_pelican_health_checks_wait_for_startup_before_serving_traffic(self):
+        documents = self.bundles["kubernetes/workloads/pelican-panel"]
+        deployment = next(doc for doc in documents if doc["kind"] == "Deployment")
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(container["image"], "ghcr.io/pelican/panel:v1.0.0-rc.2")
+        environment = {entry["name"]: entry.get("value") for entry in container["env"]}
+        self.assertEqual(environment["APP_INSTALLED"], "true")
+        self.assertEqual(environment["BEHIND_PROXY"], "true")
+        ports = {port["name"]: port["containerPort"] for port in container["ports"]}
+        for probe_name in ("startupProbe", "readinessProbe", "livenessProbe"):
+            probe = container[probe_name]
+            self.assertEqual(probe["httpGet"]["path"], "/up")
+            self.assertEqual(ports[probe["httpGet"]["port"]], 80)
+        startup = container["startupProbe"]
+        self.assertGreaterEqual(startup["periodSeconds"] * startup["failureThreshold"], 600)
+
+    def test_pelican_redis_queue_has_a_small_persistent_data_volume(self):
+        documents = self.bundles["kubernetes/workloads/pelican-panel"]
+        redis = next(doc for doc in documents if doc["kind"] == "StatefulSet")
+        claims = redis["spec"]["volumeClaimTemplates"]
+        self.assertEqual(len(claims), 1)
+        claim = claims[0]
+        self.assertEqual(claim["spec"]["accessModes"], ["ReadWriteOnce"])
+        self.assertEqual(claim["spec"]["storageClassName"], "longhorn")
+        self.assertEqual(claim["spec"]["resources"]["requests"]["storage"], "512Mi")
+        container = redis["spec"]["template"]["spec"]["containers"][0]
+        self.assertIn(
+            {"name": claim["metadata"]["name"], "mountPath": "/data"},
+            container["volumeMounts"],
+        )
 
     def test_longhorn_auth_covers_ui_and_api_without_intercepting_login_callbacks(self):
         longhorn = self.bundles["kubernetes/platform/longhorn"]

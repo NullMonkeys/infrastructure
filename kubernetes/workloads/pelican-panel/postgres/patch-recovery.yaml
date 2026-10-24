@@ -1,0 +1,37 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+
+metadata:
+  name: pelican-panel-db
+  namespace: pelican-panel
+
+spec:
+  backup:
+    barmanObjectStore:
+      serverName: pelican-panel-db-restored
+
+  bootstrap:
+    recovery:
+      source: pelican-panel-db
+      database: pelican-panel
+      owner: pelican-panel
+
+  externalClusters:
+    - name: pelican-panel-db
+      barmanObjectStore:
+        serverName: pelican-panel-db
+        destinationPath: s3://nm-pelican-panel-pg
+        endpointURL: https://s3.eu-central-003.backblazeb2.com
+
+        s3Credentials:
+          accessKeyId:
+            name: pelican-panel-secrets
+            key: backblaze-b2-access-key
+          secretAccessKey:
+            name: pelican-panel-secrets
+            key: backblaze-b2-secret-key
+
+        wal:
+          compression: gzip
+          maxParallel: 8
