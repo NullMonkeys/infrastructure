@@ -102,6 +102,46 @@
   loop: [applications, applicationsets, appprojects]
   changed_when: false
 
+- name: Inspect monitoring API prerequisites
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - get
+      - crd
+      - servicemonitors.monitoring.coreos.com
+      - podmonitors.monitoring.coreos.com
+      - --ignore-not-found
+      - -o
+      - name
+  register: argocd_monitoring_crds
+  changed_when: false
+
+- name: Seed missing monitoring API prerequisites before child Applications
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - apply
+      - --server-side
+      - --field-manager=argocd-monitoring-bootstrap
+      - -k
+      - "{{ argocd_work_dir }}/bootstrap/monitoring-crds"
+  changed_when: true
+  when: argocd_monitoring_crds.stdout_lines | length < 2
+
+- name: Wait for monitoring API prerequisites
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - wait
+      - --for=condition=Established
+      - --timeout=120s
+      - crd/servicemonitors.monitoring.coreos.com
+      - crd/podmonitors.monitoring.coreos.com
+  changed_when: false
+
 - name: Apply bootstrap rendering support, projects, and the root Application
   ansible.builtin.command:
     # A distinct manager also preserves legacy ConfigMap fields during adoption.

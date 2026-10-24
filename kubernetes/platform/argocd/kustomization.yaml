@@ -8,6 +8,7 @@ resources:
   - certificate.yaml
   - ingress.yaml
   - secrets.yaml
+  - monitoring.yaml
 
 patches:
   - path: config.yaml

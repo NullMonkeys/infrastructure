@@ -2,6 +2,9 @@
 provider:
   name: cloudflare
 
+serviceMonitor:
+  enabled: true
+
 sources: [service, ingress, traefik-proxy]
 domainFilters: [nullmonkeys.com]
 managedRecordTypes: [A, CNAME]

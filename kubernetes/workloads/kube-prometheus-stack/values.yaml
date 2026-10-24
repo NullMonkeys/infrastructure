@@ -15,6 +15,48 @@ kubeEtcd:
   serviceMonitor:
     enabled: false
 
+kubelet:
+  serviceMonitor:
+    cAdvisorInterval: 30s
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  prometheusConfigReloader:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 25Mi
+      limits:
+        memory: 64Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+nodeExporter:
+  operatingSystems:
+    aix:
+      enabled: false
+    darwin:
+      enabled: false
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
 prometheus:
   prometheusSpec:
     replicas: 1
@@ -41,6 +83,7 @@ prometheus:
     additionalScrapeConfigs:
       - job_name: kube-etcd
         scheme: http
+        scrape_interval: 30s
         kubernetes_sd_configs:
           - role: node
         relabel_configs:
@@ -57,6 +100,35 @@ prometheus:
 grafana:
   enabled: true
   replicas: 1
+  defaultDashboardsEditable: false
+
+  defaultCurlOptions: "-fLsS"
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: community
+          orgId: 1
+          folder: Platform
+          type: file
+          disableDeletion: false
+          allowUiUpdates: false
+          options:
+            path: /var/lib/grafana/dashboards/community
+  dashboards:
+    community:
+      traefik:
+        gnetId: 17346
+        revision: 9
+        datasource:
+          - name: DS_PROMETHEUS
+            value: prometheus
+      argocd:
+        gnetId: 14584
+        revision: 1
+        datasource:
+          - name: datasource
+            value: prometheus
 
   envValueFrom:
     GF_AUTH_GENERIC_OAUTH_CLIENT_ID:
@@ -106,9 +178,22 @@ grafana:
       memory: 512Mi
 
   sidecar:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
+    dashboards:
+      folderAnnotation: grafana_folder
+      annotations:
+        grafana_folder: /tmp/dashboards/Kubernetes
+      provider:
+        foldersFromFilesStructure: true
+        allowUiUpdates: false
     datasources:
       alertmanager:
-        enabled: false
+        enabled: true
 
   ingress:
     enabled: true
@@ -124,4 +209,201 @@ grafana:
           - grafana.nullmonkeys.com
 
 alertmanager:
-  enabled: false
+  enabled: true
+  config:
+    route:
+      receiver: discord
+      group_by: [namespace, alertname, severity]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - receiver: "null"
+          matchers:
+            - 'alertname =~ "Watchdog|InfoInhibitor"'
+        - receiver: "null"
+          matchers:
+            - 'severity = "info"'
+        - receiver: discord
+          matchers:
+            - 'severity = "critical"'
+          group_wait: 10s
+          repeat_interval: 1h
+    receivers:
+      - name: "null"
+      - name: discord
+        discord_configs:
+          - webhook_url_file: /etc/alertmanager/secrets/alertmanager-notifications/discord-webhook-url
+            send_resolved: true
+  alertmanagerSpec:
+    replicas: 1
+    secrets:
+      - alertmanager-notifications
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 1Gi
+
+additionalPrometheusRulesMap:
+  platform:
+    groups:
+      - name: platform.storage
+        rules:
+          - alert: LonghornVolumeDegraded
+            expr: max by (namespace, volume, pvc, pvc_namespace) (longhorn_volume_robustness{state="degraded"})
+              == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Longhorn volume {{ $labels.volume }} has degraded replicas
+              description: Inspect replica health and scheduling for {{ $labels.pvc_namespace }}/{{ $labels.pvc
+                }}.
+          - alert: LonghornVolumeFaulted
+            expr: max by (namespace, volume, pvc, pvc_namespace) (longhorn_volume_robustness{state="faulted"}) ==
+              1
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: Longhorn volume {{ $labels.volume }} is faulted
+              description: The volume has no healthy replica available; inspect Longhorn before attempting recovery.
+          - alert: LonghornNodeStorageHigh
+            expr: max by (namespace, node) (longhorn_node_storage_usage_bytes) / max by (namespace, node) (longhorn_node_storage_capacity_bytes)
+              > 0.85
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Longhorn storage on {{ $labels.node }} is over 85% used
+              description: Review volume growth, snapshots, and available replica capacity.
+          - alert: LonghornNodeStorageHigh
+            expr: max by (namespace, node) (longhorn_node_storage_usage_bytes) / max by (namespace, node) (longhorn_node_storage_capacity_bytes)
+              > 0.95
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Longhorn storage on {{ $labels.node }} is over 95% used
+              description: New writes and replica scheduling are at risk; restore free capacity.
+      - name: platform.certificates
+        rules:
+          - alert: CertificateExpiringSoon
+            expr: certmanager_certificate_expiration_timestamp_seconds - time() < 7 * 24 * 60 * 60
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Certificate {{ $labels.namespace }}/{{ $labels.name }} expires within seven days
+              description: Check the Certificate, CertificateRequest, and ACME challenge status.
+          - alert: CertificateExpiringSoon
+            expr: certmanager_certificate_expiration_timestamp_seconds - time() < 2 * 24 * 60 * 60
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Certificate {{ $labels.namespace }}/{{ $labels.name }} expires within two days or has expired
+              description: Restore certificate issuance before HTTPS clients reject the service.
+          - alert: CertificateNotReady
+            expr: certmanager_certificate_ready_status{condition="True"} == 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Certificate {{ $labels.namespace }}/{{ $labels.name }} is not ready
+              description: Inspect cert-manager issuance errors and DNS challenge credentials.
+      - name: platform.gitops
+        rules:
+          - alert: ArgoCDApplicationUnhealthy
+            expr: max by (namespace, name, project, health_status) (argocd_app_info{health_status=~"Degraded|Missing|Unknown"})
+              == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Argo CD application {{ $labels.name }} is {{ $labels.health_status }}
+              description: Inspect the application's resources and the latest reconciliation error.
+          - alert: ArgoCDApplicationOutOfSync
+            expr: max by (namespace, name, project) (argocd_app_info{sync_status="OutOfSync"}) == 1
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Argo CD application {{ $labels.name }} remains out of sync
+              description: The application has not converged to its Git configuration for fifteen minutes.
+      - name: platform.ingress
+        rules:
+          - alert: TraefikHighServerErrorRate
+            expr: |
+              (
+                sum by (namespace, entrypoint) (rate(traefik_entrypoint_requests_total{code=~"5.."}[5m]))
+                / sum by (namespace, entrypoint) (rate(traefik_entrypoint_requests_total[5m]))
+              ) > 0.05
+              and on (namespace, entrypoint)
+              sum by (namespace, entrypoint) (rate(traefik_entrypoint_requests_total[5m])) > 0.1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Traefik {{ $labels.entrypoint }} returns more than 5% server errors
+              description: Inspect upstream application health and ingress routing. The threshold excludes entrypoints
+                below 0.1 requests/second.
+      - name: platform.database
+        rules:
+          - alert: AuthentikDatabaseReplicationLag
+            expr: cnpg_pg_replication_lag{namespace="authentik"} > 300
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Authentik database instance {{ $labels.pod }} is over five minutes behind
+              description: Check standby load, network connectivity, and WAL replay before promoting a replica.
+          - alert: AuthentikDatabaseReplicationDisconnected
+            expr: |
+              cnpg_pg_replication_is_wal_receiver_up{namespace="authentik"} == 0
+              and on (namespace, pod)
+              cnpg_pg_replication_in_recovery{namespace="authentik"} == 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Authentik standby {{ $labels.pod }} has lost its WAL receiver
+              description: The primary legitimately has no WAL receiver; this alert selects only standby instances.
+                Inspect replication connectivity and CNPG reconciliation.
+          - alert: AuthentikDatabaseBackupStale
+            expr: |
+              max by (namespace) (cnpg_collector_last_available_backup_timestamp{namespace="authentik"}) < time() - 36 * 60 * 60
+              or absent(cnpg_collector_last_available_backup_timestamp{namespace="authentik"})
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: Authentik has no successful database backup within 36 hours
+              description: Check the daily ScheduledBackup, CNPG exporter, and B2 access. A zero timestamp means
+                no completed base backup; WAL archiving alone does not satisfy this alert.
+      - name: platform.discovery
+        rules:
+          - alert: PlatformMetricsMissing
+            expr: |
+              absent(up{namespace="longhorn-system"})
+              or absent(up{namespace="traefik"})
+              or absent(up{namespace="argocd"})
+              or absent(up{namespace="cert-manager"})
+              or absent(up{namespace="external-dns"})
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: No discovered metrics targets in {{ $labels.namespace }}
+              description: Check the monitoring resource's selectors and the target workload. Disappearing targets
+                do not produce an up=0 series.

@@ -33,8 +33,9 @@ that folder includes the operator and its connection/authentication resources to
 The root Application `cluster` watches only `kubernetes/bootstrap/applications/`. Infisical
 and Traefik start at wave `-10`, ExternalDNS, cert-manager and Longhorn at `-9`, monitoring at
 `-8`, CNPG at `-7`, Authentik at `-2`, and Argo self-management at `-1`.
-Monitoring installs its CRDs before CNPG creates PodMonitors; Longhorn is ready
-before monitoring requests persistent volumes.
+Bootstrap seeds missing ServiceMonitor/PodMonitor CRDs before root reconciliation,
+so each service can enable its chart-provided monitor. Monitoring manages the full
+CRD set; Longhorn is ready before monitoring requests persistent volumes.
 Inside cert-manager, the Cloudflare secret sync is at resource wave `0` and
 the issuer at `1`. This puts a service's dependent resources in the same Application.
 The InfisicalStaticSecret health check waits for successful synchronization.
@@ -82,7 +83,8 @@ cluster. Ansible still uses a separate node SSH key to configure hosts.
 Ansible also bootstraps the Infisical machine identity before Argo starts. Infisical
 supplies the Cloudflare token to cert-manager; see [secret management](secrets.md).
 
-Bootstrap waits only for Argo's own controllers and applies the root Application.
+Bootstrap seeds missing monitor API prerequisites and applies the root Application,
+then waits for Argo's own controllers.
 Child Application reconciliation proceeds independently and does not hold up
 Actions. A successful bootstrap confirms that Argo is running and configured;
 inspect application sync and health in Argo for workload deployment results.

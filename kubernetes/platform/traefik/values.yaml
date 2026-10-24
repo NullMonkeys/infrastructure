@@ -16,6 +16,14 @@ affinity:
 service:
   enabled: false
 
+metrics:
+  prometheus:
+    disableAPICheck: true
+    service:
+      enabled: true
+    serviceMonitor:
+      enabled: true
+
 updateStrategy:
   type: RollingUpdate
   rollingUpdate:

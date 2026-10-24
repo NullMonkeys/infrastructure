@@ -616,8 +616,11 @@ class GitOpsTests(unittest.TestCase):
             )
         )
         services = [doc for doc in documents if doc["kind"] == "Service"]
-        self.assertEqual(len(services), 1)
-        self.assertEqual(services[0]["spec"]["clusterIP"], "None")
+        self.assertEqual({service["metadata"]["name"] for service in services}, {"traefik-dns", "traefik-metrics"})
+        dns = next(service for service in services if service["metadata"]["name"] == "traefik-dns")
+        self.assertEqual(dns["spec"]["clusterIP"], "None")
+        metrics = next(service for service in services if service["metadata"]["name"] == "traefik-metrics")
+        self.assertEqual(metrics["spec"].get("type", "ClusterIP"), "ClusterIP")
 
     def test_infisical_health_waits_for_the_current_generation_and_successful_sync(
         self,
@@ -748,7 +751,18 @@ class GitOpsTests(unittest.TestCase):
         job = yaml.safe_load(base64.b64decode(secret["data"][reference["key"]]))[0]
         self.assertEqual(job["job_name"], "kube-etcd")
         self.assertEqual(job["scheme"], "http")
+        self.assertEqual(job["scrape_interval"], "30s")
         self.assertEqual(job["kubernetes_sd_configs"], [{"role": "node"}])
+        kubelet = next(
+            doc for doc in documents
+            if doc["kind"] == "ServiceMonitor"
+            and doc["metadata"]["name"].endswith("-kubelet")
+        )
+        cadvisor = next(
+            endpoint for endpoint in kubelet["spec"]["endpoints"]
+            if endpoint.get("path") == "/metrics/cadvisor"
+        )
+        self.assertEqual(cadvisor["interval"], "30s")
         # Exercise the rendered Prometheus relabel rules with a server and a worker.
         for control_plane in (True, False):
             labels = {
@@ -783,6 +797,190 @@ class GitOpsTests(unittest.TestCase):
                 for doc in documents
             )
         )
+
+    def test_service_charts_expose_monitors_for_real_metrics_endpoints(self):
+        targets = [
+            doc for bundle in self.bundles.values() for doc in bundle
+            if doc["kind"] in {"Service", "Deployment", "StatefulSet", "DaemonSet"}
+        ]
+        for service in ("longhorn", "traefik", "cert-manager", "external-dns", "argocd"):
+            monitors = [
+                doc for doc in self.bundles[f"kubernetes/platform/{service}"]
+                if doc["kind"] in {"ServiceMonitor", "PodMonitor"}
+            ]
+            self.assertTrue(monitors, f"{service} must expose a monitor")
+            for monitor in monitors:
+                with self.subTest(service=service, monitor=monitor["metadata"]["name"]):
+                    spec = monitor["spec"]
+                    namespaces = spec.get("namespaceSelector", {}).get(
+                        "matchNames", [monitor["metadata"]["namespace"]]
+                    )
+                    pod_monitor = monitor["kind"] == "PodMonitor"
+                    selected = []
+                    for target in targets:
+                        if (target["kind"] == "Service") == pod_monitor:
+                            continue
+                        if target["metadata"].get("namespace", "default") not in namespaces:
+                            continue
+                        labels = (
+                            target["spec"]["template"]["metadata"]["labels"]
+                            if pod_monitor else target["metadata"].get("labels", {})
+                        )
+                        selector = spec["selector"]
+                        if any(labels.get(k) != v for k, v in selector.get("matchLabels", {}).items()):
+                            continue
+                        if any(
+                            expression["operator"] != "In"
+                            or labels.get(expression["key"]) not in expression["values"]
+                            for expression in selector.get("matchExpressions", [])
+                        ):
+                            continue
+                        selected.append(target)
+                    self.assertTrue(selected, "Monitor must select a rendered metrics target")
+                    for target in selected:
+                        ports = (
+                            [port for container in target["spec"]["template"]["spec"]["containers"]
+                             for port in container.get("ports", [])]
+                            if pod_monitor else target["spec"]["ports"]
+                        )
+                        for endpoint in spec["podMetricsEndpoints" if pod_monitor else "endpoints"]:
+                            if "port" in endpoint:
+                                self.assertIn(endpoint["port"], {port["name"] for port in ports})
+                            else:
+                                selected_workloads = [
+                                    workload for workload in targets
+                                    if workload["kind"] != "Service"
+                                    and workload["metadata"].get("namespace", "default")
+                                    == target["metadata"].get("namespace", "default")
+                                    and all(
+                                        workload["spec"]["template"]["metadata"]["labels"].get(key) == value
+                                        for key, value in target["spec"]["selector"].items()
+                                    )
+                                ]
+                                self.assertTrue(selected_workloads)
+                                for workload in selected_workloads:
+                                    container_ports = [
+                                        port for container in workload["spec"]["template"]["spec"]["containers"]
+                                        for port in container.get("ports", [])
+                                    ]
+                                    field = "name" if isinstance(endpoint["targetPort"], str) else "containerPort"
+                                    self.assertIn(endpoint["targetPort"], {port[field] for port in container_ports})
+                    if service == "argocd":
+                        self.assertEqual(len(selected), 6)
+                    if service == "cert-manager":
+                        self.assertTrue(all(endpoint["honorLabels"] for endpoint in spec["endpoints"]))
+
+    def test_monitoring_bootstrap_seeds_the_same_api_schemas_before_applications(self):
+        import yaml
+
+        prerequisites = self.bundles["kubernetes/bootstrap/monitoring-crds"]
+        expected = {"servicemonitors.monitoring.coreos.com", "podmonitors.monitoring.coreos.com"}
+        self.assertEqual({doc["metadata"]["name"] for doc in prerequisites}, expected)
+        stack_crds = {
+            doc["metadata"]["name"]: doc
+            for doc in self.bundles["kubernetes/workloads/kube-prometheus-stack"]
+            if doc["kind"] == "CustomResourceDefinition"
+        }
+        for crd in prerequisites:
+            self.assertEqual(crd["spec"], stack_crds[crd["metadata"]["name"]]["spec"])
+        tasks = yaml.safe_load((ROOT / "ansible/roles/argocd/tasks/main.yml").read_text())
+        names = [task["name"] for task in tasks]
+        seed = "Seed missing monitoring API prerequisites before child Applications"
+        wait = "Wait for monitoring API prerequisites"
+        apply = "Apply bootstrap rendering support, projects, and the root Application"
+        self.assertLess(names.index(seed), names.index(wait))
+        self.assertLess(names.index(wait), names.index(apply))
+        seed_task = tasks[names.index(seed)]
+        self.assertEqual(seed_task["when"], "argocd_monitoring_crds.stdout_lines | length < 2")
+        self.assertNotIn("--force-conflicts", seed_task["ansible.builtin.command"]["argv"])
+
+    def test_chart_downloads_pinned_dashboard_ids_with_separate_providers(self):
+        import yaml
+
+        documents = self.bundles["kubernetes/workloads/kube-prometheus-stack"]
+        config = next(
+            doc for doc in documents if doc["kind"] == "ConfigMap"
+            and "download_dashboards.sh" in doc.get("data", {})
+        )
+        script = config["data"]["download_dashboards.sh"]
+        self.assertIn("https://grafana.com/api/dashboards/17346/revisions/9/download", script)
+        self.assertIn("https://grafana.com/api/dashboards/14584/revisions/1/download", script)
+        self.assertIn("curl -fLsS", script)
+        provider = yaml.safe_load(config["data"]["dashboardproviders.yaml"])["providers"][0]
+        self.assertEqual(provider["options"]["path"], "/var/lib/grafana/dashboards/community")
+        self.assertEqual(provider["folder"], "Platform")
+        sidecar_provider = next(
+            yaml.safe_load(doc["data"]["provider.yaml"])["providers"][0]
+            for doc in documents if doc["kind"] == "ConfigMap"
+            and "provider.yaml" in doc.get("data", {})
+        )
+        self.assertNotEqual(provider["options"]["path"], sidecar_provider["options"]["path"])
+        deployment = next(doc for doc in documents if doc["kind"] == "Deployment"
+                          and doc["metadata"]["name"].endswith("-grafana"))
+        pod = deployment["spec"]["template"]["spec"]
+        self.assertIn("download-dashboards", {container["name"] for container in pod["initContainers"]})
+        grafana = next(container for container in pod["containers"] if container["name"] == "grafana")
+        paths = [mount["mountPath"] for mount in grafana["volumeMounts"]]
+        self.assertEqual(len(paths), len(set(paths)), "Dashboard providers must not collide")
+
+    def test_discord_credentials_are_synced_and_mounted_without_exposing_the_url(self):
+        import yaml
+
+        documents = self.bundles["kubernetes/workloads/kube-prometheus-stack"]
+        alertmanager = next(doc for doc in documents if doc["kind"] == "Alertmanager")
+        sync = next(doc for doc in documents if doc["kind"] == "InfisicalStaticSecret"
+                    and doc["metadata"]["name"] == "alertmanager-notifications-sync")
+        target = sync["spec"]["targets"][0]
+        self.assertEqual(target["name"], alertmanager["spec"]["secrets"][0])
+        self.assertEqual(target["namespace"], alertmanager["metadata"]["namespace"])
+        self.assertEqual(sync["spec"]["sources"][0]["secretPath"], "/k3s/alertmanager")
+        self.assertLess(int(sync["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"]), 0)
+        secret = next(doc for doc in documents if doc["kind"] == "Secret"
+                      and "alertmanager.yaml" in doc.get("data", {}))
+        config = yaml.safe_load(base64.b64decode(secret["data"]["alertmanager.yaml"]))
+        receiver = next(receiver for receiver in config["receivers"] if receiver["name"] == "discord")
+        discord = receiver["discord_configs"][0]
+        self.assertNotIn("webhook_url", discord)
+        self.assertEqual(discord["webhook_url_file"], f"/etc/alertmanager/secrets/{target['name']}/discord-webhook-url")
+        self.assertTrue(discord["send_resolved"])
+        storage = alertmanager["spec"]["storage"]["volumeClaimTemplate"]["spec"]
+        self.assertEqual(storage["storageClassName"], "longhorn")
+        self.assertEqual(storage["resources"]["requests"]["storage"], "1Gi")
+        if os.environ.get("AMTOOL_BIN"):
+            with tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "alertmanager.yaml"
+                path.write_text(yaml.safe_dump(config))
+                subprocess.run([os.environ["AMTOOL_BIN"], "check-config", str(path)], check=True, capture_output=True, text=True)
+                for labels, receiver in (
+                    (["alertname=Watchdog", "severity=none"], "null"),
+                    (["alertname=InfoInhibitor", "severity=info"], "null"),
+                    (["alertname=SyntheticInfo", "severity=info"], "null"),
+                    (["alertname=LonghornVolumeDegraded", "severity=warning"], "discord"),
+                    (["alertname=LonghornVolumeFaulted", "severity=critical"], "discord"),
+                ):
+                    subprocess.run([
+                        os.environ["AMTOOL_BIN"], "config", "routes", "test",
+                        f"--config.file={path}", f"--verify.receivers={receiver}", *labels,
+                    ], check=True, capture_output=True, text=True)
+
+    @unittest.skipUnless(os.environ.get("PROMTOOL_BIN"), "Set PROMTOOL_BIN for custom alert rule evaluation.")
+    def test_platform_alerts_with_prometheus(self):
+        import yaml
+
+        documents = self.bundles["kubernetes/workloads/kube-prometheus-stack"]
+        rule = next(doc for doc in documents if doc["kind"] == "PrometheusRule" and doc["metadata"]["name"] == "kube-prometheus-stack-platform")
+        prometheus = next(doc for doc in documents if doc["kind"] == "Prometheus")
+        self.assertEqual(rule["metadata"]["labels"]["release"], prometheus["spec"]["ruleSelector"]["matchLabels"]["release"])
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            rules_path = directory / "platform.yaml"
+            rules_path.write_text(yaml.safe_dump(rule["spec"]))
+            subprocess.run([os.environ["PROMTOOL_BIN"], "check", "rules", str(rules_path)], check=True, capture_output=True, text=True)
+            fixtures = yaml.safe_load((ROOT / "scripts/tests/fixtures/monitoring-alerts.yaml").read_text())
+            fixtures["rule_files"] = [str(rules_path)]
+            fixture_path = directory / "tests.yaml"
+            fixture_path.write_text(yaml.safe_dump(fixtures))
+            subprocess.run([os.environ["PROMTOOL_BIN"], "test", "rules", str(fixture_path)], check=True, capture_output=True, text=True)
 
     def test_build_discards_stale_chart_caches_without_changing_the_source(self):
         with tempfile.TemporaryDirectory() as temporary:
