@@ -43,7 +43,7 @@ jobs:
       - name: Set up tflint
         uses: terraform-linters/setup-tflint@v6
         with:
-          tflint_version: "0.59.1"
+          tflint_version: "0.65.0"
 
       - name: Lint
         run: |
