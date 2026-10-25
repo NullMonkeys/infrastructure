@@ -26,7 +26,7 @@ spec:
     retentionPolicy: "3d"
 
     barmanObjectStore:
-      destinationPath: s3://nm-pelican-panel-pg
+      destinationPath: s3://nm-pelican-pg
       endpointURL: https://s3.eu-central-003.backblazeb2.com
 
       s3Credentials:
