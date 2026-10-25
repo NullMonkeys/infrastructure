@@ -20,3 +20,5 @@ monitoring:
 
   grafanaDashboard:
     create: true
+    annotations:
+      grafana_folder: /tmp/dashboards/Platform

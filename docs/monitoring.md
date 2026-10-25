@@ -127,6 +127,8 @@ The small declarations live under `grafana.dashboards.community` in `values.yaml
 All map their datasource input to UID `prometheus`. The download provider writes
 under `/var/lib/grafana/dashboards/community` and displays the dashboards in
 `Platform`; the ConfigMap sidecar uses `/tmp/dashboards` for the bundled dashboards.
+CNPG's dashboard ConfigMap sets `grafana_folder: /tmp/dashboards/Platform` so it
+also appears in `Platform`, while the stack's dashboards remain in `Kubernetes`.
 The providers have distinct names, paths, and provisioning files.
 
 The MariaDB operator chart does not bundle a dashboard. Dashboard 14057 is one of
