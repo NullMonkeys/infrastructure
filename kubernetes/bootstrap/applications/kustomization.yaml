@@ -14,3 +14,5 @@ resources:
   - cnpg.yaml
   - authentik.yaml
   - pelican-panel.yaml
+  - arc-systems.yaml
+  - arc-runner-set.yaml

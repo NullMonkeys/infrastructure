@@ -129,6 +129,12 @@ grafana:
         datasource:
           - name: datasource
             value: prometheus
+      github-arc:
+        gnetId: 25015
+        revision: 4
+        datasource:
+          - name: datasource
+            value: prometheus
 
   envValueFrom:
     GF_AUTH_GENERIC_OAUTH_CLIENT_ID:

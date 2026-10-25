@@ -899,6 +899,40 @@ class GitOpsTests(unittest.TestCase):
             self.assertNotIn("helm", source)
             self.assertIn(source["path"], self.bundles)
 
+    def test_arc_runner_namespace_and_dashboard_discovery_labels(self):
+        application = next(
+            doc for doc in self.bundles["kubernetes/bootstrap/applications"]
+            if doc["metadata"]["name"] == "arc-runner-set"
+        )
+        runners = self.bundles[application["spec"]["source"]["path"]]
+        runner_set = next(doc for doc in runners if doc["kind"] == "AutoscalingRunnerSet")
+        secret = next(doc for doc in runners if doc["kind"] == "InfisicalStaticSecret")
+        namespace = runner_set["metadata"]["namespace"]
+        self.assertEqual(application["spec"]["destination"]["namespace"], namespace)
+        self.assertEqual(secret["spec"]["targets"][0]["namespace"], namespace)
+        self.assertEqual(
+            secret["spec"]["targets"][0]["name"], runner_set["spec"]["githubConfigSecret"]
+        )
+
+        listener = next(
+            doc for doc in self.bundles["kubernetes/platform/arc-systems"]
+            if doc["kind"] == "PodMonitor"
+            and doc["spec"]["selector"]["matchLabels"].get("app.kubernetes.io/component")
+            == "runner-scale-set-listener"
+        )
+        endpoint = listener["spec"]["podMetricsEndpoints"][0]
+        relabel = next(
+            rule for rule in endpoint["relabelings"]
+            if rule["targetLabel"] == "runner_scale_set_name"
+        )
+        # ARC propagates the scale-set label to its dynamically created listener pod.
+        discovery_labels = {
+            "__meta_kubernetes_pod_label_" + re.sub(r"[^a-zA-Z0-9_]", "_", key): value
+            for key, value in runner_set["metadata"]["labels"].items()
+        }
+        source = ";".join(discovery_labels.get(key, "") for key in relabel["sourceLabels"])
+        self.assertEqual(source, runner_set["metadata"]["name"])
+
     def test_monitoring_storage_dependencies_and_cross_namespace_discovery(self):
         documents = self.bundles["kubernetes/workloads/kube-prometheus-stack"]
         prometheus = next(doc for doc in documents if doc["kind"] == "Prometheus")
@@ -1126,6 +1160,7 @@ class GitOpsTests(unittest.TestCase):
         script = config["data"]["download_dashboards.sh"]
         self.assertIn("https://grafana.com/api/dashboards/17346/revisions/9/download", script)
         self.assertIn("https://grafana.com/api/dashboards/14584/revisions/1/download", script)
+        self.assertIn("https://grafana.com/api/dashboards/25015/revisions/4/download", script)
         self.assertIn("curl -fLsS", script)
         provider = yaml.safe_load(config["data"]["dashboardproviders.yaml"])["providers"][0]
         self.assertEqual(provider["options"]["path"], "/var/lib/grafana/dashboards/community")

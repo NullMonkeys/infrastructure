@@ -1,0 +1,51 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+
+metadata:
+  name: arc-systems-controller
+  namespace: arc-systems
+
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gha-rs-controller
+      app.kubernetes.io/component: controller-manager
+
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      relabelings:
+        - sourceLabels: [__address__]
+          action: replace
+          targetLabel: job
+          replacement: arc-controller
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+
+metadata:
+  name: arc-systems-listener
+  namespace: arc-systems
+
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: gha-runner-scale-set
+      app.kubernetes.io/component: runner-scale-set-listener
+
+  podMetricsEndpoints:
+    - targetPort: 8080
+      path: /metrics
+      interval: 30s
+      relabelings:
+        - sourceLabels: [__address__]
+          action: replace
+          targetLabel: job
+          replacement: arc-listeners
+        - sourceLabels: [__meta_kubernetes_pod_label_actions_github_com_scale_set_name]
+          action: replace
+          targetLabel: runner_scale_set_name
+          replacement: $1

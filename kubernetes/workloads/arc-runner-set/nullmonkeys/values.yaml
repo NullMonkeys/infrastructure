@@ -1,0 +1,13 @@
+---
+githubConfigUrl: "https://github.com/NullMonkeys"
+githubConfigSecret: arc-runner-set-secrets-nullmonkeys
+
+minRunners: 0
+maxRunners: 3
+
+containerMode:
+  type: "dind"
+
+controllerServiceAccount:
+  namespace: arc-systems
+  name: arc-systems-gha-rs-controller

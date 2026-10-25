@@ -118,12 +118,18 @@ separate `community` file provider downloads these dashboard IDs at startup:
 | --- | --- | --- |
 | Traefik Official Standalone | 17346 | 9 |
 | ArgoCD | 14584 | 1 |
+| GitHub Actions ARC - Runner Scale Set | 25015 | 4 |
 
 The small declarations live under `grafana.dashboards.community` in `values.yaml`.
-Both map their datasource input to UID `prometheus`. The download provider writes
+All map their datasource input to UID `prometheus`. The download provider writes
 under `/var/lib/grafana/dashboards/community` and displays the dashboards in
 `Platform`; the ConfigMap sidecar uses `/tmp/dashboards` for the bundled dashboards.
 The providers have distinct names, paths, and provisioning files.
+
+The ARC dashboard requires scrape job labels `arc-controller` and `arc-listeners`.
+Its per-set panels also need a `runner_scale_set_name` target label, which can be
+copied from the listener pod's `actions.github.com/scale-set-name` label during
+target relabeling.
 
 To add another published dashboard, append an entry under the same values key:
 
