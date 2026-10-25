@@ -37,7 +37,7 @@ jobs:
   scope:
     name: Select deployment stages
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       terraform: ${{ steps.scope.outputs.terraform }}
@@ -62,7 +62,7 @@ jobs:
     name: Deploy infrastructure
     needs: scope
     if: needs.scope.outputs.terraform == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 210
     env:
       HCP_TERRAFORM_TOKEN: ${{ secrets.HCP_TERRAFORM_TOKEN }}
@@ -85,7 +85,7 @@ jobs:
       !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.ansible == 'true' &&
       (needs.terraform.result == 'success' ||
       (needs.terraform.result == 'skipped' && needs.scope.outputs.terraform == 'false'))
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     env:
       HCP_TERRAFORM_TOKEN: ${{ secrets.HCP_TERRAFORM_TOKEN }}
@@ -133,7 +133,7 @@ jobs:
     name: Configure hosts
     needs: [scope, inventory]
     if: ${{ !cancelled() && needs.inventory.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     env:
       ANSIBLE_CONFIG: ansible/ansible.cfg
