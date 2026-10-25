@@ -12,6 +12,7 @@ resources:
   - kube-prometheus-stack.yaml
   - longhorn.yaml
   - cnpg.yaml
+  - mariadb-operator.yaml
   - authentik.yaml
   - pelican-panel.yaml
   - arc-systems.yaml

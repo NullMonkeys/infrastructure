@@ -12,6 +12,9 @@ resources:
   - svc.yaml
   - postgres/cluster.yaml
   - postgres/backup.yaml
+  - mariadb/mariadb.yaml
+  - mariadb/user.yaml
+  - mariadb/grant.yaml
 
 patches:
   - path: postgres/patch-init.yaml

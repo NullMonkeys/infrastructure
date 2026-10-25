@@ -5,7 +5,9 @@ using the stable Helm chart pinned in `kubernetes/platform/tailscale/kustomizati
 This installs the operator, its CRDs, RBAC, and the non-default `tailscale`
 IngressClass. The operator joins the tailnet as `tailscale-operator`, tagged
 `tag:k8s-operator`. API server proxying and impersonation remain disabled.
-No workloads, routes, or Kubernetes API access are exposed by this configuration.
+The operator configuration itself exposes no workloads, routes, or Kubernetes API
+access. Pelican's MariaDB Service separately requests private tailnet exposure;
+see [game server databases](pelican-panel.md#game-server-databases-over-tailscale).
 
 ## Tailnet prerequisites
 
@@ -27,7 +29,8 @@ Before the authorized GitOps rollout:
    Give the existing cluster machine identity read access to this path.
 
 The tag ownership lets the operator manage future devices tagged `tag:k8s`;
-it does not add traffic-access rules. Service exposure and routing are deferred.
+it does not add traffic-access rules. Workloads request Service exposure in their
+own manifests, and the tailnet policy determines which clients can connect.
 
 ## Credential sync and startup
 

@@ -68,7 +68,8 @@ check can cover that separately.
 
 ## Discovery and deployment order
 
-Longhorn (wave -9) precedes monitoring (-8); CNPG (-7) and Authentik (-2) follow.
+Longhorn (wave -9) precedes monitoring (-8); CNPG and MariaDB operator (-7), then
+Authentik (-2), follow.
 The existing Argo bootstrap seeds the ServiceMonitor and PodMonitor CRDs when
 missing, then waits for them to become Established before creating the root
 Application. This lets early services expose their own monitors without waiting
@@ -93,6 +94,7 @@ Enable discovery in the chart that owns each service:
 | cert-manager | `prometheus.servicemonitor.enabled` |
 | ExternalDNS | `serviceMonitor.enabled` |
 | CNPG operator | `monitoring.podMonitorEnabled` |
+| MariaDB operator and webhook | `metrics.enabled` (chart ServiceMonitors enabled by default) |
 | Authentik server/worker | `metrics.serviceMonitor.enabled` on each component |
 
 Traefik's `disableAPICheck` permits offline Helm rendering; bootstrap still supplies
@@ -119,12 +121,22 @@ separate `community` file provider downloads these dashboard IDs at startup:
 | Traefik Official Standalone | 17346 | 9 |
 | ArgoCD | 14584 | 1 |
 | GitHub Actions ARC - Runner Scale Set | 25015 | 4 |
+| MySQL Exporter Quickstart and Dashboard (MariaDB) | 14057 | 1 |
 
 The small declarations live under `grafana.dashboards.community` in `values.yaml`.
 All map their datasource input to UID `prometheus`. The download provider writes
 under `/var/lib/grafana/dashboards/community` and displays the dashboards in
 `Platform`; the ConfigMap sidecar uses `/tmp/dashboards` for the bundled dashboards.
 The providers have distinct names, paths, and provisioning files.
+
+The MariaDB operator chart does not bundle a dashboard. Dashboard 14057 is one of
+the [upstream recommendations](https://github.com/mariadb-operator/mariadb-operator/blob/26.10.1/docs/metrics.md#grafana-dashboards)
+and queries `mysqld_exporter` metrics directly without additional recording rules.
+It monitors database instances, while the chart's `metrics.enabled` exposes only
+operator and webhook metrics. Set `spec.metrics.enabled: true` on each future
+`MariaDB` resource so the operator provisions its exporter and ServiceMonitor;
+until then, this dashboard has no database data. Some panels depend on optional
+collectors or database features and can remain empty when those are unavailable.
 
 The ARC dashboard requires scrape job labels `arc-controller` and `arc-listeners`.
 Its per-set panels also need a `runner_scale_set_name` target label, which can be

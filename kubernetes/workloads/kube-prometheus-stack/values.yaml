@@ -135,6 +135,12 @@ grafana:
         datasource:
           - name: datasource
             value: prometheus
+      mariadb:
+        gnetId: 14057
+        revision: 1
+        datasource:
+          - name: datasource
+            value: prometheus
 
   envValueFrom:
     GF_AUTH_GENERIC_OAUTH_CLIENT_ID:

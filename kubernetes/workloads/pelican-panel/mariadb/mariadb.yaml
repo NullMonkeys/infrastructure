@@ -1,0 +1,48 @@
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+
+metadata:
+  name: pelican-mariadb
+  namespace: pelican-panel
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+
+spec:
+  rootPasswordSecretKeyRef:
+    name: pelican-panel-secrets
+    key: mariadb-root-password
+
+  storage:
+    size: 5Gi
+    storageClassName: longhorn
+
+  replicas: 1
+
+  service:
+    type: LoadBalancer
+    loadBalancerClass: tailscale
+    allocateLoadBalancerNodePorts: false
+    metadata:
+      annotations:
+        tailscale.com/hostname: pelican-mariadb
+
+  metrics:
+    enabled: true
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      memory: 4Gi
+
+  myCnf: |
+    [mariadb]
+    max_connections=500
+    max_connect_errors=10000
+    thread_cache_size=50
+    table_open_cache=2000
+
+  affinity:
+    antiAffinityEnabled: true

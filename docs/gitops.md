@@ -18,6 +18,7 @@ kubernetes/
 │   ├── infisical/
 │   ├── cnpg/
 │   ├── longhorn/
+│   ├── mariadb-operator/
 │   ├── tailscale/
 │   └── traefik/
 └── workloads/
@@ -34,8 +35,8 @@ that folder includes the operator and its connection/authentication resources to
 
 The root Application `cluster` watches only `kubernetes/bootstrap/applications/`. Infisical
 and Traefik start at wave `-10`, ExternalDNS, cert-manager, Longhorn and Tailscale at
-`-9`, monitoring at `-8`, CNPG at `-7`, Authentik at `-2`, Argo self-management at
-`-1`, and Pelican at `0`.
+`-9`, monitoring at `-8`, CNPG and MariaDB operator at `-7`, Authentik at `-2`,
+Argo self-management at `-1`, and Pelican at `0`.
 Bootstrap seeds missing ServiceMonitor/PodMonitor CRDs before root reconciliation,
 so each service can enable its chart-provided monitor. Monitoring manages the full
 CRD set; Longhorn is ready before monitoring requests persistent volumes.

@@ -551,6 +551,39 @@ class GitOpsTests(unittest.TestCase):
             if document["kind"] == "PersistentVolumeClaim":
                 self.assertLess(wave(document), wave(panel))
 
+    def test_pelican_game_database_uses_private_tailscale_exposure_and_managed_credentials(self):
+        documents = self.bundles["kubernetes/workloads/pelican-panel"]
+        database = next(doc for doc in documents if doc["kind"] == "MariaDB")
+        user = next(doc for doc in documents if doc["kind"] == "User")
+        grant = next(doc for doc in documents if doc["kind"] == "Grant")
+        sync = next(doc for doc in documents if doc["kind"] == "InfisicalStaticSecret")
+        service = database["spec"]["service"]
+        self.assertEqual(service["type"], "LoadBalancer")
+        self.assertEqual(service["loadBalancerClass"], "tailscale")
+        self.assertFalse(service["allocateLoadBalancerNodePorts"])
+        self.assertEqual(
+            service["metadata"]["annotations"]["tailscale.com/hostname"],
+            database["metadata"]["name"],
+        )
+        targets = {target["name"] for target in sync["spec"]["targets"]}
+        for document, field, key in (
+            (database, "rootPasswordSecretKeyRef", "mariadb-root-password"),
+            (user, "passwordSecretKeyRef", "mariadb-pelican-password"),
+        ):
+            reference = document["spec"][field]
+            self.assertIn(reference["name"], targets)
+            self.assertEqual(reference["key"], key)
+            self.assertFalse(reference.get("generate", False))
+        for document in (user, grant):
+            self.assertEqual(document["metadata"]["namespace"], database["metadata"]["namespace"])
+            self.assertEqual(document["spec"]["mariaDbRef"]["name"], database["metadata"]["name"])
+        self.assertEqual(grant["spec"]["username"], user["spec"].get("name", user["metadata"]["name"]))
+        self.assertTrue(database["spec"]["metrics"]["enabled"])
+        self.assertLess(
+            int(sync["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"]),
+            int(database["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"]),
+        )
+
     def test_pelican_rollouts_keep_a_single_writer_for_rwo_storage(self):
         documents = self.bundles["kubernetes/workloads/pelican-panel"]
         deployment = next(doc for doc in documents if doc["kind"] == "Deployment")
@@ -965,6 +998,8 @@ class GitOpsTests(unittest.TestCase):
         }
         self.assertLess(waves["longhorn"], waves["kube-prometheus-stack"])
         self.assertLess(waves["kube-prometheus-stack"], waves["cloudnative-pg"])
+        self.assertLess(waves["cert-manager"], waves["mariadb-operator"])
+        self.assertLess(waves["kube-prometheus-stack"], waves["mariadb-operator"])
         self.assertLess(waves["cloudnative-pg"], waves["authentik"])
         self.assertEqual(
             applications["kube-prometheus-stack"]["spec"]["destination"]["namespace"],
@@ -1054,11 +1089,23 @@ class GitOpsTests(unittest.TestCase):
         )
 
     def test_service_charts_expose_monitors_for_real_metrics_endpoints(self):
+        namespaces = {
+            app["spec"]["source"]["path"]: app["spec"]["destination"]["namespace"]
+            for app in self.bundles["kubernetes/bootstrap/applications"]
+        }
+        # Argo assigns the Application destination to namespace-less resources.
         targets = [
-            doc for bundle in self.bundles.values() for doc in bundle
+            dict(doc, metadata=dict(
+                doc["metadata"],
+                namespace=doc["metadata"].get("namespace", namespaces.get(path, "default")),
+            ))
+            for path, bundle in self.bundles.items() for doc in bundle
             if doc["kind"] in {"Service", "Deployment", "StatefulSet", "DaemonSet"}
         ]
-        for service in ("longhorn", "traefik", "cert-manager", "external-dns", "argocd"):
+        for service in (
+            "longhorn", "traefik", "cert-manager", "external-dns", "argocd",
+            "mariadb-operator",
+        ):
             monitors = [
                 doc for doc in self.bundles[f"kubernetes/platform/{service}"]
                 if doc["kind"] in {"ServiceMonitor", "PodMonitor"}
@@ -1067,15 +1114,17 @@ class GitOpsTests(unittest.TestCase):
             for monitor in monitors:
                 with self.subTest(service=service, monitor=monitor["metadata"]["name"]):
                     spec = monitor["spec"]
-                    namespaces = spec.get("namespaceSelector", {}).get(
-                        "matchNames", [monitor["metadata"]["namespace"]]
+                    selected_namespaces = spec.get("namespaceSelector", {}).get(
+                        "matchNames", [monitor["metadata"].get(
+                            "namespace", namespaces[f"kubernetes/platform/{service}"]
+                        )]
                     )
                     pod_monitor = monitor["kind"] == "PodMonitor"
                     selected = []
                     for target in targets:
                         if (target["kind"] == "Service") == pod_monitor:
                             continue
-                        if target["metadata"].get("namespace", "default") not in namespaces:
+                        if target["metadata"].get("namespace", "default") not in selected_namespaces:
                             continue
                         labels = (
                             target["spec"]["template"]["metadata"]["labels"]
@@ -1091,6 +1140,15 @@ class GitOpsTests(unittest.TestCase):
                         ):
                             continue
                         selected.append(target)
+                    if not pod_monitor:
+                        # Prometheus ignores Services without the endpoint's named port.
+                        selected = [target for target in selected if any(
+                            "targetPort" in endpoint
+                            or endpoint["port"] in {
+                                port.get("name") for port in target["spec"]["ports"]
+                            }
+                            for endpoint in spec["endpoints"]
+                        )]
                     self.assertTrue(selected, "Monitor must select a rendered metrics target")
                     for target in selected:
                         ports = (
@@ -1100,7 +1158,7 @@ class GitOpsTests(unittest.TestCase):
                         )
                         for endpoint in spec["podMetricsEndpoints" if pod_monitor else "endpoints"]:
                             if "port" in endpoint:
-                                self.assertIn(endpoint["port"], {port["name"] for port in ports})
+                                self.assertIn(endpoint["port"], {port.get("name") for port in ports})
                             else:
                                 selected_workloads = [
                                     workload for workload in targets
@@ -1161,6 +1219,7 @@ class GitOpsTests(unittest.TestCase):
         self.assertIn("https://grafana.com/api/dashboards/17346/revisions/9/download", script)
         self.assertIn("https://grafana.com/api/dashboards/14584/revisions/1/download", script)
         self.assertIn("https://grafana.com/api/dashboards/25015/revisions/4/download", script)
+        self.assertIn("https://grafana.com/api/dashboards/14057/revisions/1/download", script)
         self.assertIn("curl -fLsS", script)
         provider = yaml.safe_load(config["data"]["dashboardproviders.yaml"])["providers"][0]
         self.assertEqual(provider["options"]["path"], "/var/lib/grafana/dashboards/community")
