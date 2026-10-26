@@ -17,3 +17,4 @@ resources:
   - pelican-panel.yaml
   - arc-systems.yaml
   - arc-runner-set.yaml
+  - kaneo.yaml

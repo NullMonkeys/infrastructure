@@ -1,0 +1,42 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+
+metadata:
+  name: kaneo-db
+  namespace: kaneo
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+
+spec:
+  instances: 1
+
+  monitoring:
+    enablePodMonitor: true
+
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+
+  storage:
+    size: 3Gi
+    storageClass: longhorn
+
+  backup:
+    retentionPolicy: "3d"
+
+    barmanObjectStore:
+      destinationPath: s3://nm-kaneo-pg
+      endpointURL: https://s3.eu-central-003.backblazeb2.com
+
+      s3Credentials:
+        accessKeyId:
+          name: kaneo-secrets
+          key: backblaze-b2-postgres-backups-access-key
+        secretAccessKey:
+          name: kaneo-secrets
+          key: backblaze-b2-postgres-backups-secret-key
+
+      wal:
+        compression: gzip
+        maxParallel: 8

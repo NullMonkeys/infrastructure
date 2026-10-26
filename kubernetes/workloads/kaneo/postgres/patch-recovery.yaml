@@ -1,0 +1,37 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+
+metadata:
+  name: kaneo-db
+  namespace: kaneo
+
+spec:
+  backup:
+    barmanObjectStore:
+      serverName: kaneo-db-restored
+
+  bootstrap:
+    recovery:
+      source: kaneo-db
+      database: kaneo
+      owner: kaneo
+
+  externalClusters:
+    - name: kaneo-db
+      barmanObjectStore:
+        serverName: kaneo-db
+        destinationPath: s3://nm-kaneo-pg
+        endpointURL: https://s3.eu-central-003.backblazeb2.com
+
+        s3Credentials:
+          accessKeyId:
+            name: kaneo-secrets
+            key: backblaze-b2-postgres-backups-access-key
+          secretAccessKey:
+            name: kaneo-secrets
+            key: backblaze-b2-postgres-backups-secret-key
+
+        wal:
+          compression: gzip
+          maxParallel: 8

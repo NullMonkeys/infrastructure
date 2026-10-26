@@ -512,6 +512,7 @@ class GitOpsTests(unittest.TestCase):
         }
         self.assertEqual(ingress_hosts, {
             "auth.nullmonkeys.com", "grafana.nullmonkeys.com",
+            "kaneo.nullmonkeys.com",
             "longhorn.nullmonkeys.com", "pelican.nullmonkeys.com",
         })
         ingress_routes = [route for route in routes if route["kind"] == "IngressRoute"]

@@ -1,0 +1,66 @@
+---
+replicaCount: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+postgresql:
+  enabled: false
+
+kaneo:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  env:
+    clientUrl: "https://kaneo.nullmonkeys.com"
+
+    existingSecret:
+      enabled: true
+      name: kaneo-secrets
+      key: auth-secret
+
+    disableRegistration: true
+    disablePasswordRegistration: true
+    disableEmailOtpSignIn: true
+
+    database:
+      external:
+        enabled: true
+        existingSecret:
+          enabled: true
+          name: kaneo-db-app
+          passwordKey: uri
+
+  extraEnvFrom:
+    - secretRef:
+        name: kaneo-secrets
+
+ingress:
+  enabled: true
+  className: traefik
+
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    external-dns.kubernetes.io/target: ingress.nullmonkeys.com
+
+  hosts:
+    - host: kaneo.nullmonkeys.com
+      paths:
+        - path: /
+          pathType: Prefix
+          service: kaneo
+          port: 5173
+
+  tls:
+    - secretName: kaneo-tls
+      hosts:
+        - kaneo.nullmonkeys.com
