@@ -12,6 +12,7 @@ spec:
   rootPasswordSecretKeyRef:
     name: pelican-panel-secrets
     key: mariadb-root-password
+    generate: false
 
   storage:
     size: 5Gi

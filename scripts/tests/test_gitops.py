@@ -566,6 +566,8 @@ class GitOpsTests(unittest.TestCase):
             database["metadata"]["name"],
         )
         targets = {target["name"] for target in sync["spec"]["targets"]}
+        # Match the CRD default explicitly so Argo does not report perpetual drift.
+        self.assertIs(database["spec"]["rootPasswordSecretKeyRef"]["generate"], False)
         for document, field, key in (
             (database, "rootPasswordSecretKeyRef", "mariadb-root-password"),
             (user, "passwordSecretKeyRef", "mariadb-pelican-password"),
