@@ -306,6 +306,19 @@ DNS-01 checks need a successful Infisical sync and a Cloudflare token with
 zone permissions. Inspect the Challenge before retrying; do not repeatedly delete certificates
 or ACME account Secrets, which can consume issuance limits.
 
+MariaDB operator and CRD charts use the [upstream OCI registry](https://github.com/mariadb-operator/mariadb-operator/blob/main/docs/helm.md#oci-based-installation)
+at `oci://ghcr.io/mariadb-operator/charts`. This avoids fetching the GitHub Pages
+chart index and following GitHub release download redirects during manifest generation.
+Both chart versions remain pinned in the service's `kustomization.yaml`.
+
+A `kustomize build ... failed timeout after 1m30s` error means Argo's manifest
+generation command exceeded its execution limit, before applying resources. It
+does not establish an operator or database runtime failure. If the error is
+cached after a fix reaches `main`, use **Refresh → Hard Refresh** on the
+`mariadb-operator` Application. If generation still times out, inspect
+`argocd-repo-server` logs and its DNS/HTTPS access to GHCR; a successful local
+render does not establish cluster connectivity.
+
 For manifest failures, fix Git and retry reconciliation. For bootstrap failures,
 fix the cause and rerun deployment; the cluster is retained. If the Argo installation
 itself needs reseeding, an explicitly authorized local Ansible run can pass

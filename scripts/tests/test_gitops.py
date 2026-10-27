@@ -552,6 +552,39 @@ class GitOpsTests(unittest.TestCase):
             if document["kind"] == "PersistentVolumeClaim":
                 self.assertLess(wave(document), wave(panel))
 
+    def test_mariadb_operator_includes_database_apis_and_cert_manager_webhook(self):
+        documents = self.bundles["kubernetes/platform/mariadb-operator"]
+        crds = {
+            doc["metadata"]["name"]
+            for doc in documents if doc["kind"] == "CustomResourceDefinition"
+        }
+        database_resources = self.bundles["kubernetes/workloads/pelican-panel"]
+        for document in database_resources:
+            if document["apiVersion"].startswith("k8s.mariadb.com/"):
+                with self.subTest(kind=document["kind"]):
+                    self.assertTrue(any(
+                        doc["kind"] == "CustomResourceDefinition"
+                        and doc["spec"]["names"]["kind"] == document["kind"]
+                        for doc in documents
+                    ))
+        self.assertIn("mariadbs.k8s.mariadb.com", crds)
+        deployments = {
+            doc["metadata"]["name"]: doc
+            for doc in documents if doc["kind"] == "Deployment"
+        }
+        self.assertIn("mariadb-operator", deployments)
+        self.assertIn("mariadb-operator-webhook", deployments)
+        certificate = next(doc for doc in documents if doc["kind"] == "Certificate")
+        issuer = next(doc for doc in documents if doc["kind"] == "Issuer")
+        self.assertEqual(certificate["spec"]["issuerRef"], {
+            "kind": "Issuer", "name": issuer["metadata"]["name"],
+        })
+        webhook = next(doc for doc in documents if doc["kind"] == "ValidatingWebhookConfiguration")
+        self.assertEqual(
+            webhook["metadata"]["annotations"]["cert-manager.io/inject-ca-from"],
+            "mariadb-operator/" + certificate["metadata"]["name"],
+        )
+
     def test_pelican_game_database_uses_private_tailscale_exposure_and_managed_credentials(self):
         documents = self.bundles["kubernetes/workloads/pelican-panel"]
         database = next(doc for doc in documents if doc["kind"] == "MariaDB")

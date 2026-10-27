@@ -6,14 +6,14 @@ namespace: mariadb-operator
 
 helmCharts:
   - name: mariadb-operator
-    repo: https://mariadb-operator.github.io/mariadb-operator
+    repo: oci://ghcr.io/mariadb-operator/charts
     version: 26.10.2
     releaseName: mariadb-operator
     namespace: mariadb-operator
     valuesFile: values.yaml
 
   - name: mariadb-operator-crds
-    repo: https://mariadb-operator.github.io/mariadb-operator
+    repo: oci://ghcr.io/mariadb-operator/charts
     version: 26.10.2
     releaseName: mariadb-operator-crds
     namespace: mariadb-operator
