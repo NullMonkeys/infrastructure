@@ -12,7 +12,7 @@ resources:
 helmCharts:
   - name: kaneo
     repo: oci://ghcr.io/usekaneo/charts
-    version: 2.47.1
+    version: 2.48.0
     releaseName: kaneo
     valuesFile: values.yaml
     namespace: kaneo
