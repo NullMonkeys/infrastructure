@@ -23,7 +23,7 @@ patches:
 helmCharts:
   - name: redis
     repo: https://charts.bitnami.com/bitnami
-    version: 28.3.10
+    version: 28.3.12
     releaseName: redis
     namespace: pelican-panel
     valuesFile: redis/values.yaml
